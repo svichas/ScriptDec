@@ -47,7 +47,8 @@ The app is ad-hoc signed, not notarized. On another Mac, the first launch needs 
 
 - `src-tauri/src/sessions.rs` owns the PTYs: scrollback, stop escalation (Ctrl-C, then SIGTERM, then SIGKILL on the whole tree) and URL detection.
 - `src-tauri/src/project.rs` reads and edits `package.json` and finds workspaces. `node.rs` resolves Node versions across nvm, fnm and Volta.
-- `ui/` is plain HTML and JS with no build step. `ui/vendor/` holds xterm.js, copied from `node_modules`.
+- `ui/` is plain HTML and JS with no build step. `ui/vendor/` holds xterm.js, copied from `node_modules`. The colours are the tokens at the top of `ui/app.css`.
+- `src-tauri/icons/icon.svg` and `tray.svg` are the icon sources. `tauri icon` turns them into the PNG, ICNS and ICO files beside them.
 - Scripts run through your login shell, so they get the same `PATH` as your terminal. The project's Node version is set after your rc files, so it wins over your version manager's default.
 - Projects are stored in `config.json` in the app config folder (`~/Library/Application Support/com.scriptdec.desktop/` on macOS).
 

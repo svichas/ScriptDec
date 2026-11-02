@@ -4,12 +4,36 @@ const tabs = document.getElementById('tabs');
 const actions = document.getElementById('actions');
 const screen = document.getElementById('screen');
 
+const token = (name) => getComputedStyle(screen).getPropertyValue(name).trim();
+
 const term = new window.Terminal({
   fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
   fontSize: 12,
   scrollback: 10000,
   convertEol: false,
-  theme: { background: '#14161b', foreground: '#e6e8ec', cursor: '#2dd4bf', selectionBackground: '#3b4252' },
+  theme: {
+    background: token('--bg'),
+    foreground: token('--fg'),
+    cursor: token('--accent'),
+    selectionBackground: '#ff804759',
+    // All 4.5:1 or better on --bg, except black and the deliberately dim bright black.
+    black: '#2e2b28',
+    red: '#f2697f',
+    green: '#7ed492',
+    yellow: '#f2c14e',
+    blue: '#7fb0f5',
+    magenta: '#d897e0',
+    cyan: '#62cdc3',
+    white: '#d9d4cb',
+    brightBlack: '#7d776e',
+    brightRed: '#ff8c9e',
+    brightGreen: '#a0e7ae',
+    brightYellow: '#ffd873',
+    brightBlue: '#a3c7ff',
+    brightMagenta: '#ecb4f2',
+    brightCyan: '#8ce6dd',
+    brightWhite: '#fbf8f2',
+  },
 });
 const fit = new window.FitAddon.FitAddon();
 term.loadAddon(fit);

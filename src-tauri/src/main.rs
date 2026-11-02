@@ -329,6 +329,12 @@ fn script_failed(app: &AppHandle, session: &SessionView) {
         .show();
 }
 
+// Only macOS tints template icons; a black glyph would vanish on a dark Windows taskbar.
+#[cfg(target_os = "macos")]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
+#[cfg(not(target_os = "macos"))]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/32x32.png");
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open ScriptDec", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
@@ -336,7 +342,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit ScriptDec", true, None::<&str>)?;
     let line = PredefinedMenuItem::separator(app)?;
     TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+        .icon(Image::from_bytes(TRAY_ICON)?)
         .icon_as_template(true)
         .tooltip("ScriptDec")
         .menu(&Menu::with_items(app, &[&open, &settings, &stop, &line, &quit])?)
