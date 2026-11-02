@@ -190,9 +190,14 @@ body.popover { background: transparent; overflow: hidden; }
 .inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .note { margin: 6px 0 0; color: var(--fg-2); font-size: 12px; }
 .custom-row, .add-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
-.custom-row .actions { display: flex; }
+.custom-row .actions { display: flex; gap: 4px; }
+.script-editor { margin: 4px 0; }
+.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.section-head h2 { margin: 0; }
 .detail .filter { width: 100%; margin-bottom: 6px; }
-.package-title { margin: 12px 0 2px; padding-left: 12px; font-size: 12px; font-weight: 600; }
+.package-title { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 2px; padding: 0 8px 0 12px; font-size: 12px; font-weight: 600; }
+.check { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+.check input { margin: 0; }
 
 /* Terminal */
 .terminal-page { display: flex; flex-direction: column; height: 100vh; background: #14161b; color: #e6e8ec; }

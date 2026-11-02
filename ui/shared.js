@@ -26,6 +26,7 @@ const PATHS = {
   starred: `<path d="${STAR}" fill="currentColor" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>`,
   chevron: '<path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
   plus: '<path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  pencil: '<path d="M3 13v-2.4L10.6 3a1.1 1.1 0 0 1 1.6 0l.8.8a1.1 1.1 0 0 1 0 1.6L5.4 13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
 };
 
 export function icon(name) {

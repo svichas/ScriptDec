@@ -62,6 +62,23 @@ struct Session {
     run: u32,
     scrollback: Vec<u8>,
     pty: Option<Pty>,
+    /// Ctrl-C was typed in the terminal, so ending now is the user's doing, not a crash.
+    interrupted: bool,
+}
+
+impl Session {
+    fn view(&self, id: u32) -> SessionView {
+        SessionView {
+            id,
+            project_id: self.spec.project_id.clone(),
+            project: self.spec.project.clone(),
+            label: self.spec.label.clone(),
+            command: self.spec.command.clone(),
+            status: self.status,
+            code: self.code,
+            url: self.url.clone(),
+        }
+    }
 }
 
 type Sink = Box<dyn Fn(&[u8]) + Send>;
@@ -78,29 +95,21 @@ pub struct Sessions {
     inner: Mutex<Inner>,
     /// Called with no lock held, whenever anything in `list()` changes.
     on_change: Box<dyn Fn() + Send + Sync>,
+    /// Called with no lock held, when a script ends with an error nobody asked for.
+    on_failure: Box<dyn Fn(&SessionView) + Send + Sync>,
 }
 
 impl Sessions {
-    pub fn new(on_change: Box<dyn Fn() + Send + Sync>) -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::default(), on_change })
+    pub fn new(
+        on_change: Box<dyn Fn() + Send + Sync>,
+        on_failure: Box<dyn Fn(&SessionView) + Send + Sync>,
+    ) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::default(), on_change, on_failure })
     }
 
     pub fn list(&self) -> Vec<SessionView> {
         let inner = self.inner.lock().unwrap();
-        let mut list: Vec<_> = inner
-            .sessions
-            .iter()
-            .map(|(id, s)| SessionView {
-                id: *id,
-                project_id: s.spec.project_id.clone(),
-                project: s.spec.project.clone(),
-                label: s.spec.label.clone(),
-                command: s.spec.command.clone(),
-                status: s.status,
-                code: s.code,
-                url: s.url.clone(),
-            })
-            .collect();
+        let mut list: Vec<_> = inner.sessions.iter().map(|(id, s)| s.view(*id)).collect();
         list.sort_by_key(|s| s.id);
         list
     }
@@ -135,7 +144,17 @@ impl Sessions {
         let pid = child.process_id().unwrap_or(0);
 
         let pty = Some(Pty { master: pair.master, writer });
-        let session = Session { spec, status: Status::Running, code: None, url: None, pid, run, scrollback: vec![], pty };
+        let session = Session {
+            spec,
+            status: Status::Running,
+            code: None,
+            url: None,
+            pid,
+            run,
+            scrollback: vec![],
+            pty,
+            interrupted: false,
+        };
         inner.sessions.insert(id, session);
         if let Some((_, sink)) = inner.sink.as_ref().filter(|(sink_id, _)| *sink_id == id) {
             sink(b"\x1bc"); // a restart starts from a clean screen
@@ -148,13 +167,19 @@ impl Sessions {
         thread::spawn(move || {
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
             let mut inner = this.inner.lock().unwrap();
+            let mut failed = None;
             if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
-                s.status = if s.status == Status::Stopping { Status::Stopped } else { Status::Exited };
+                let stopped = s.status == Status::Stopping || s.interrupted;
+                s.status = if stopped { Status::Stopped } else { Status::Exited };
                 s.code = code;
                 s.pty = None; // hangs up anything left behind in the terminal
+                failed = (!stopped && code.is_some_and(|c| c != 0)).then(|| s.view(id));
             }
             drop(inner);
             (this.on_change)();
+            if let Some(session) = failed {
+                (this.on_failure)(&session);
+            }
         });
         (self.on_change)();
         Ok(id)
@@ -289,9 +314,12 @@ impl Sessions {
 
     pub fn send_input(&self, id: u32, data: &[u8]) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(pty) = inner.sessions.get_mut(&id).and_then(|s| s.pty.as_mut()) {
-            let _ = pty.writer.write_all(data);
-            let _ = pty.writer.flush();
+        if let Some(s) = inner.sessions.get_mut(&id) {
+            s.interrupted |= data.contains(&3);
+            if let Some(pty) = s.pty.as_mut() {
+                let _ = pty.writer.write_all(data);
+                let _ = pty.writer.flush();
+            }
         }
     }
 
@@ -305,9 +333,14 @@ impl Sessions {
     /// Blocking: runs on quit, so nothing outlives the app.
     pub fn shutdown(&self) {
         let targets: Vec<_> = {
-            let inner = self.inner.lock().unwrap();
-            let alive = inner.sessions.iter().filter(|(_, s)| s.pty.is_some());
-            alive.map(|(id, s)| (*id, s.run, s.pid)).collect()
+            let mut inner = self.inner.lock().unwrap();
+            let alive = inner.sessions.iter_mut().filter(|(_, s)| s.pty.is_some());
+            alive
+                .map(|(id, s)| {
+                    s.status = Status::Stopping; // quitting shouldn't read as every script crashing
+                    (*id, s.run, s.pid)
+                })
+                .collect()
         };
         for (_, _, pid) in &targets {
             kill_tree(*pid, Signal::Term);
@@ -493,7 +526,37 @@ mod tests {
     }
 
     fn new_sessions() -> Arc<Sessions> {
-        Sessions::new(Box::new(|| {}))
+        Sessions::new(Box::new(|| {}), Box::new(|_| {}))
+    }
+
+    #[test]
+    fn reports_a_crash_but_not_a_clean_exit_or_a_stop_the_user_asked_for() {
+        let failures = Arc::new(Mutex::new(Vec::new()));
+        let seen = failures.clone();
+        let report = move |s: &SessionView| seen.lock().unwrap().push((s.label.clone(), s.code));
+        let sessions = Sessions::new(Box::new(|| {}), Box::new(report));
+
+        let clean = sessions.start(spec("exit 0")).unwrap();
+        wait_for("clean exit", || view(&sessions, clean).status == Status::Exited);
+
+        let stopped = sessions.start(spec("sleep 30")).unwrap();
+        sessions.stop(stopped);
+        wait_for("stop button", || view(&sessions, stopped).status == Status::Stopped);
+
+        let typed = sessions.start(spec("echo ready; sleep 30")).unwrap();
+        wait_for("ready", || output(&sessions, typed).contains("ready"));
+        sessions.send_input(typed, b"\x03");
+        wait_for("typed Ctrl-C", || view(&sessions, typed).status == Status::Stopped);
+
+        let quit = sessions.start(spec("echo ready; sleep 30")).unwrap();
+        wait_for("ready", || output(&sessions, quit).contains("ready"));
+        sessions.shutdown();
+        wait_for("quit", || view(&sessions, quit).status == Status::Stopped);
+
+        assert!(failures.lock().unwrap().is_empty());
+        sessions.start(Spec { label: "boom".into(), ..spec("exit 7") }).unwrap();
+        wait_for("failure", || !failures.lock().unwrap().is_empty());
+        assert_eq!(*failures.lock().unwrap(), [("boom".to_string(), Some(7))]);
     }
 
     #[test]

@@ -1,7 +1,10 @@
-use crate::{config::Project, node};
+use crate::{
+    config::{self, Project},
+    node,
+};
 use glob::{MatchOptions, Pattern};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, ser::PrettyFormatter, Map, Serializer, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -145,11 +148,15 @@ fn workspace_command(pm: &str, package: &str, script: &str) -> String {
     }
 }
 
+pub fn script_key(package: Option<&str>, name: &str) -> String {
+    format!("{}:{name}", package.unwrap_or(""))
+}
+
 fn scripts_of(manifest: &Value, package: Option<&str>, pm: &str, out: &mut Vec<Script>) {
     let Some(scripts) = manifest["scripts"].as_object() else { return };
     for (name, body) in scripts {
         out.push(Script {
-            key: format!("{}:{name}", package.unwrap_or("")),
+            key: script_key(package, name),
             name: name.clone(),
             package: package.map(String::from),
             command: match package {
@@ -173,6 +180,85 @@ fn tools(pm: &str) -> Vec<Tool> {
     ]
     .map(|(label, command)| Tool { label: label.to_string(), command })
     .to_vec()
+}
+
+/// The folder of the project's own package.json, or of one of its workspace packages.
+pub fn package_dir(project: &Project, package: Option<&str>) -> Result<PathBuf, String> {
+    let root = PathBuf::from(&project.path);
+    let Some(name) = package else { return Ok(root) };
+    find_packages(&root, &workspace_patterns(&root, &read_manifest(&root)?))
+        .into_iter()
+        .find(|dir| read_manifest(dir).is_ok_and(|manifest| manifest["name"] == name))
+        .ok_or_else(|| format!("Package {name} not found"))
+}
+
+/// Applies one change to a package.json: add (`old` is None), edit or rename (both set), or delete
+/// (`new` is None).
+/// shortcut: re-serialises the whole file, so hand-aligned JSON is normalised exactly as
+/// `npm pkg set` would; patch only the `scripts` span if that diff noise ever matters.
+fn edit_manifest(text: &str, old: Option<&str>, new: Option<(&str, &str)>) -> Result<String, String> {
+    let mut manifest: Value = serde_json::from_str(text).map_err(|e| format!("package.json: {e}"))?;
+    let root = manifest.as_object_mut().ok_or("package.json is not a JSON object")?;
+    let scripts = root.entry("scripts").or_insert_with(|| json!({}));
+    let scripts = scripts.as_object_mut().ok_or("\"scripts\" in package.json is not an object")?;
+
+    if let Some((name, body)) = new {
+        if name.trim().is_empty() || body.trim().is_empty() {
+            return Err("A script needs a name and a command".to_string());
+        }
+        if old != Some(name) && scripts.contains_key(name) {
+            return Err(format!("There is already a script called {name}"));
+        }
+    }
+    match (old, new) {
+        (None, None) => return Err("Nothing to change".to_string()),
+        (None, Some((name, body))) => {
+            scripts.insert(name.to_string(), json!(body));
+        }
+        (Some(old), _) => {
+            if !scripts.contains_key(old) {
+                return Err(format!("Script {old} is no longer in package.json"));
+            }
+            // Rebuilt rather than removed and re-added, so a renamed script keeps its place.
+            let edited: Map<String, Value> = scripts
+                .iter()
+                .filter_map(|(key, value)| match new {
+                    _ if key != old => Some((key.clone(), value.clone())),
+                    Some((name, body)) => Some((name.to_string(), json!(body))),
+                    None => None,
+                })
+                .collect();
+            *scripts = edited;
+        }
+    }
+
+    let indent: String = text.lines().nth(1).unwrap_or("  ").chars().take_while(|c| c.is_whitespace()).collect();
+    let mut out = vec![];
+    let formatter = PrettyFormatter::with_indent(indent.as_bytes());
+    manifest.serialize(&mut Serializer::with_formatter(&mut out, formatter)).map_err(|e| e.to_string())?;
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut out = String::from_utf8_lossy(&out).replace('\n', eol);
+    if text.ends_with('\n') {
+        out.push_str(eol);
+    }
+    Ok(out)
+}
+
+/// Reads fresh from disk, so a change made in an editor since the last scan isn't overwritten.
+pub fn write_script(dir: &Path, old: Option<&str>, new: Option<(&str, &str)>) -> Result<(), String> {
+    let path = fs::canonicalize(dir.join("package.json")).map_err(|e| format!("package.json: {e}"))?;
+    let text = fs::read_to_string(&path).map_err(|e| format!("package.json: {e}"))?;
+    config::write_atomic(&path, &edit_manifest(&text, old, new)?)
+}
+
+/// A pin is keyed by script name, so it follows a rename and goes away with a delete.
+pub fn move_pin(pinned: &mut Vec<String>, old: &str, new: Option<String>) {
+    if let Some(at) = pinned.iter().position(|key| key == old) {
+        match new {
+            Some(key) => pinned[at] = key,
+            None => drop(pinned.remove(at)),
+        }
+    }
 }
 
 pub fn scan(project: &Project) -> Scan {
@@ -276,6 +362,103 @@ mod tests {
         assert!(scan(&project(&dir)).error.is_some());
         fs::write(dir.join("package.json"), "{ nope").unwrap();
         assert!(scan(&project(&dir)).error.is_some());
+    }
+
+    const MANIFEST: &str = "{\n    \"name\": \"demo\",\n    \"version\": \"1.0.0\",\n    \"scripts\": {\n        \"zeta\": \"z\",\n        \"alpha\": \"a\",\n        \"mid\": \"m\"\n    },\n    \"author\": \"Zoë\",\n    \"files\": [],\n    \"dependencies\": {\n        \"z-dep\": \"1\",\n        \"a-dep\": \"2\"\n    }\n}\n";
+
+    fn script_names(text: &str) -> Vec<String> {
+        let manifest: Value = serde_json::from_str(text).unwrap();
+        manifest["scripts"].as_object().unwrap().keys().cloned().collect()
+    }
+
+    #[test]
+    fn adding_changes_only_that_line_and_keeps_order_and_formatting() {
+        let edited = edit_manifest(MANIFEST, None, Some(("build", "tsc"))).unwrap();
+        let expected = MANIFEST.replace(
+            "\"mid\": \"m\"\n",
+            "\"mid\": \"m\",\n        \"build\": \"tsc\"\n",
+        );
+        assert_eq!(edited, expected);
+    }
+
+    #[test]
+    fn editing_a_body_changes_nothing_else() {
+        let edited = edit_manifest(MANIFEST, Some("alpha"), Some(("alpha", "b"))).unwrap();
+        assert_eq!(edited, MANIFEST.replace("\"alpha\": \"a\"", "\"alpha\": \"b\""));
+    }
+
+    #[test]
+    fn renaming_keeps_the_scripts_position() {
+        let edited = edit_manifest(MANIFEST, Some("alpha"), Some(("first", "a"))).unwrap();
+        assert_eq!(script_names(&edited), ["zeta", "first", "mid"]);
+    }
+
+    #[test]
+    fn deleting_removes_only_that_script() {
+        let edited = edit_manifest(MANIFEST, Some("alpha"), None).unwrap();
+        assert_eq!(edited, MANIFEST.replace("        \"alpha\": \"a\",\n", ""));
+    }
+
+    #[test]
+    fn keeps_tabs_crlf_and_a_missing_final_newline() {
+        let tabs = "{\n\t\"scripts\": {\n\t\t\"a\": \"b\"\n\t}\n}";
+        assert_eq!(edit_manifest(tabs, Some("a"), Some(("a", "c"))).unwrap(), tabs.replace("\"b\"", "\"c\""));
+        let crlf = MANIFEST.replace('\n', "\r\n");
+        let edited = edit_manifest(&crlf, Some("alpha"), Some(("alpha", "b"))).unwrap();
+        assert_eq!(edited, crlf.replace("\"alpha\": \"a\"", "\"alpha\": \"b\""));
+    }
+
+    #[test]
+    fn creates_the_scripts_block_when_there_is_none() {
+        let edited = edit_manifest("{\n  \"name\": \"x\"\n}\n", None, Some(("dev", "vite"))).unwrap();
+        assert_eq!(edited, "{\n  \"name\": \"x\",\n  \"scripts\": {\n    \"dev\": \"vite\"\n  }\n}\n");
+    }
+
+    #[test]
+    fn refuses_changes_that_would_lose_something() {
+        let err = |result: Result<String, String>| result.unwrap_err();
+        assert!(err(edit_manifest(MANIFEST, None, Some(("alpha", "x")))).contains("already"));
+        assert!(err(edit_manifest(MANIFEST, Some("zeta"), Some(("alpha", "x")))).contains("already"));
+        assert!(err(edit_manifest(MANIFEST, Some("gone"), None)).contains("no longer"));
+        assert!(err(edit_manifest(MANIFEST, None, Some((" ", "x")))).contains("needs"));
+        assert!(err(edit_manifest(MANIFEST, None, Some(("x", "")))).contains("needs"));
+        assert!(err(edit_manifest(MANIFEST, None, None)).contains("Nothing"));
+        assert!(err(edit_manifest("{ nope", None, Some(("a", "b")))).contains("package.json"));
+        assert!(err(edit_manifest("[]", None, Some(("a", "b")))).contains("not a JSON object"));
+        assert!(err(edit_manifest("{\"scripts\": 1}", None, Some(("a", "b")))).contains("not an object"));
+    }
+
+    #[test]
+    fn a_failed_edit_leaves_the_file_as_it_was_and_no_temp_file() {
+        let dir = repo("failed-edit");
+        fs::write(dir.join("package.json"), MANIFEST).unwrap();
+        assert!(write_script(&dir, Some("gone"), None).is_err());
+        assert_eq!(fs::read_to_string(dir.join("package.json")).unwrap(), MANIFEST);
+        write_script(&dir, None, Some(("new", "x"))).unwrap();
+        assert!(fs::read_to_string(dir.join("package.json")).unwrap().contains("\"new\": \"x\""));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn finds_a_workspace_package_by_name_and_refuses_an_unknown_one() {
+        let dir = repo("package-dir");
+        write(dir.join("package.json"), json!({"workspaces": ["packages/*"]}));
+        write(dir.join("packages/a/package.json"), json!({"name": "@x/a"}));
+        let project = project(&dir);
+        assert_eq!(package_dir(&project, None).unwrap(), dir);
+        assert_eq!(package_dir(&project, Some("@x/a")).unwrap(), dir.join("packages/a"));
+        assert!(package_dir(&project, Some("../../etc")).is_err());
+    }
+
+    #[test]
+    fn pins_follow_a_rename_and_go_with_a_delete() {
+        let mut pinned = vec![":a".to_string(), ":b".to_string()];
+        move_pin(&mut pinned, ":a", Some(":c".to_string()));
+        assert_eq!(pinned, [":c", ":b"]);
+        move_pin(&mut pinned, ":b", None);
+        assert_eq!(pinned, [":c"]);
+        move_pin(&mut pinned, ":missing", None);
+        assert_eq!(pinned, [":c"]);
     }
 
     #[cfg(unix)]

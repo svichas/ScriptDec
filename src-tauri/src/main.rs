@@ -22,7 +22,9 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, State, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 struct App {
@@ -37,6 +39,11 @@ impl App {
         let mut config = self.config.lock().unwrap();
         change(&mut config)?;
         config::save(&self.config_path, &config)
+    }
+
+    fn project(&self, id: &str) -> Result<Project, String> {
+        let config = self.config.lock().unwrap();
+        config.projects.iter().find(|p| p.id == id).cloned().ok_or_else(|| "Unknown project".to_string())
     }
 }
 
@@ -60,7 +67,7 @@ async fn list_projects(app: AppHandle) -> Vec<ProjectView> {
 }
 
 #[tauri::command]
-fn nvm_versions() -> Vec<String> {
+fn node_versions() -> Vec<node::Install> {
     node::installed()
 }
 
@@ -108,12 +115,43 @@ fn update_project(state: State<App>, project: Project) -> Result<(), String> {
     })
 }
 
+/// Adds, changes or deletes one script in a package.json; see `project::write_script`.
+#[tauri::command]
+async fn edit_script(
+    app: AppHandle,
+    project_id: String,
+    package: Option<String>,
+    old: Option<String>,
+    script: Option<(String, String)>,
+) -> Result<(), String> {
+    let state = app.state::<App>();
+    let dir = project::package_dir(&state.project(&project_id)?, package.as_deref())?;
+    let new = script.as_ref().map(|(name, body)| (name.trim(), body.trim()));
+    project::write_script(&dir, old.as_deref(), new)?;
+    let Some(old) = old else { return Ok(()) };
+    let old_key = project::script_key(package.as_deref(), &old);
+    let new_key = new.map(|(name, _)| project::script_key(package.as_deref(), name));
+    state.edit(|config| {
+        let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
+        project::move_pin(&mut project.pinned, &old_key, new_key);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn login_item(app: AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+#[tauri::command]
+fn set_login_item(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let login = app.autolaunch();
+    if enabled { login.enable() } else { login.disable() }.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn run(state: State<App>, project_id: String, label: String, command: String) -> Result<u32, String> {
-    let project = {
-        let config = state.config.lock().unwrap();
-        config.projects.iter().find(|p| p.id == project_id).ok_or("Unknown project")?.clone()
-    };
+    let project = state.project(&project_id)?;
     let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
     state.sessions.start(Spec {
         project_id,
@@ -279,6 +317,18 @@ fn sessions_changed(app: &AppHandle) {
     }
 }
 
+fn script_failed(app: &AppHandle, session: &SessionView) {
+    // The output is already in front of them, and `pnpm outdated` exiting 1 isn't news.
+    if app.get_webview_window("terminal").is_some_and(|window| window.is_focused().unwrap_or(false)) {
+        return;
+    }
+    let notification = app.notification().builder();
+    let _ = notification
+        .title(format!("{} failed", session.label))
+        .body(format!("{}: exit code {}", session.project, session.code.unwrap_or_default()))
+        .show();
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open ScriptDec", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
@@ -312,17 +362,22 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = config::load(&config_path);
             let first_run = config.projects.is_empty();
-            let handle = app.handle().clone();
+            let (changed, failed) = (app.handle().clone(), app.handle().clone());
             app.manage(App {
                 config: Mutex::new(config),
                 config_path,
-                sessions: Sessions::new(Box::new(move || sessions_changed(&handle))),
+                sessions: Sessions::new(
+                    Box::new(move || sessions_changed(&changed)),
+                    Box::new(move |session| script_failed(&failed, session)),
+                ),
                 popover_hidden_at: Mutex::new(Instant::now()),
             });
             show_in_dock(app.handle(), false);
@@ -352,11 +407,14 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_projects,
-            nvm_versions,
+            node_versions,
             pick_folder,
             add_project,
             remove_project,
             update_project,
+            edit_script,
+            login_item,
+            set_login_item,
             run,
             list_sessions,
             stop,

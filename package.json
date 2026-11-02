@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "dmg": "CI=true tauri build --bundles app,dmg",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {

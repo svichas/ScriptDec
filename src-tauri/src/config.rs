@@ -13,7 +13,7 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub path: String,
-    /// None follows .nvmrc / .node-version.
+    /// None follows .nvmrc, .node-version or a Volta pin.
     pub node_version: Option<String>,
     pub custom: Vec<CustomScript>,
     /// Script keys shown up front in the menu bar.
@@ -44,8 +44,16 @@ pub fn save(path: &Path, config: &Config) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
+    write_atomic(path, &text)
+}
+
+/// A failed write, such as a full disk, leaves the old file in place.
+pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    if let Ok(meta) = fs::metadata(path) {
+        let _ = fs::set_permissions(&tmp, meta.permissions());
+    }
     fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
