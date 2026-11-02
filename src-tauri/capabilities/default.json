@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "ScriptDec windows; everything else goes through the app's own commands",
+  "windows": ["popover", "settings", "terminal"],
+  "permissions": ["core:default"]
+}
