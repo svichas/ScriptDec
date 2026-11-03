@@ -148,6 +148,23 @@ button.btn.danger { color: var(--bad); }
   z-index: 10;
 }
 
+.update {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 8px;
+  background: var(--tint);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  z-index: 9;
+}
+.update span { flex: 1; min-width: 0; }
+
 /* Popover */
 body.popover { background: transparent; overflow: hidden; }
 .panel {

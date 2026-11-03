@@ -101,3 +101,38 @@ export function nodeLabel(node) {
 }
 
 export const urlLabel = (url) => `:${new URL(url).port}`;
+
+const LATEST_RELEASE = 'https://api.github.com/repos/svichas/ScriptDec/releases/latest';
+const RECHECK_MS = 6 * 60 * 60 * 1000; // GitHub allows 60 unauthenticated requests an hour
+
+const stored = (key) => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
+const store = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* only a convenience */ } };
+
+/** The newest release tag, asked of GitHub at most every few hours across all windows. */
+async function latestRelease() {
+  const cached = stored('latestRelease');
+  if (cached && Date.now() - cached.checkedAt < RECHECK_MS) return cached.tag;
+  const response = await fetch(LATEST_RELEASE, { headers: { Accept: 'application/vnd.github+json' } });
+  if (!response.ok) return cached?.tag;
+  const { tag_name: tag } = await response.json();
+  store('latestRelease', { tag, checkedAt: Date.now() });
+  return tag;
+}
+
+const isNewer = (tag, version) => tag.replace(/^v/, '').localeCompare(version, 'en', { numeric: true }) > 0;
+
+async function updateBanner() {
+  const [tag, version] = await Promise.all([latestRelease(), window.__TAURI__.app.getVersion()]);
+  document.querySelector('.update')?.remove();
+  if (!tag || !isNewer(tag, version) || stored('dismissedUpdate') === tag) return;
+  const banner = h('div', { class: 'update', role: 'status' },
+    h('span', {}, `ScriptDec ${tag} is available. You have ${version}.`),
+    h('button', { class: 'btn primary', onClick: () => call('open_latest_release') }, 'Download'),
+    iconButton('close', 'Dismiss', () => { store('dismissedUpdate', tag); banner.remove(); }));
+  document.body.append(banner);
+}
+
+// Focus re-checks too: the popover lives for days, and a dismiss in another window should stick here.
+const checkForUpdate = () => updateBanner().catch(() => {}); // offline is fine, try again later
+window.addEventListener('focus', checkForUpdate);
+checkForUpdate();
