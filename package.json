@@ -2,7 +2,11 @@
   "name": "scriptdec",
   "private": true,
   "version": "0.1.0",
+  "description": "A menu bar app for running your package.json scripts in the background",
+  "license": "MIT",
+  "repository": "github:svichas/ScriptDec",
   "scripts": {
+    "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "dmg": "CI=true tauri build --bundles app,dmg",
