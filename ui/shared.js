@@ -1,6 +1,9 @@
 export const { invoke, Channel } = window.__TAURI__.core;
 export const { listen } = window.__TAURI__.event;
 
+export const MAC = navigator.userAgent.includes('Mac');
+document.documentElement.classList.toggle('mac', MAC); // windows there leave room for the traffic lights
+
 /** Builds DOM nodes. Never use innerHTML with data: names come from package.json files. */
 export function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -27,6 +30,8 @@ const PATHS = {
   chevron: '<path d="m6 4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
   plus: '<path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
   pencil: '<path d="M3 13v-2.4L10.6 3a1.1 1.1 0 0 1 1.6 0l.8.8a1.1 1.1 0 0 1 0 1.6L5.4 13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
+  search: '<circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  folder: '<path d="M2.5 4.5a1 1 0 0 1 1-1h2.8l1.5 1.5h4.7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 };
 
 export function icon(name) {

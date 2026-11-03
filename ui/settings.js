@@ -1,36 +1,57 @@
-import { call, h, iconButton, invoke, runScript, saveProject, shortPackage, togglePin } from './shared.js';
+import {
+  call, h, icon, iconButton, invoke, MAC, runScript, saveProject, shortPackage, togglePin,
+} from './shared.js';
 
 const MAX_ROWS = 80;
+const GENERAL = 'general';
+const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20];
+const KEY_SYMBOLS = { Control: '⌃', Alt: '⌥', Shift: '⇧', Super: '⌘' };
 
 let projects = [];
 let versions = [];
-let selectedId = null;
+let settings = {};
+let version = '';
+let selectedId = null; // a project's id, or GENERAL
 let filter = '';
 let confirming = null; // the destructive action waiting for its second click
 let editing = null; // the package.json script being changed: { key, package, old, name, body }; old is null for a new one
+let recording = false; // the shortcut button is waiting for keys
 let launchAtLogin = false;
 
-const sidebar = h('nav', { class: 'sidebar', 'aria-label': 'Projects' });
-const detail = h('main', { class: 'detail' });
-document.body.append(h('div', { class: 'settings' }, sidebar, detail));
+const sidebar = h('nav', { class: 'sidebar', 'aria-label': 'Sections', 'data-tauri-drag-region': 'deep' });
+const head = h('header', { class: 'page-head', 'data-tauri-drag-region': 'deep' });
+const body = h('div', { class: 'page-body' });
+document.body.append(h('div', { class: 'settings' }, sidebar, h('main', { class: 'detail' }, head, body)));
 
 const selected = () => projects.find((p) => p.id === selectedId);
 
 async function load() {
-  [projects, versions, launchAtLogin] = await Promise.all([
-    invoke('list_projects'), invoke('node_versions'), invoke('login_item'),
+  [projects, versions, launchAtLogin, settings, version] = await Promise.all([
+    invoke('list_projects'), invoke('node_versions'), invoke('login_item'), invoke('settings'),
+    window.__TAURI__.app.getVersion(),
   ]);
-  if (!selected()) selectedId = projects[0]?.id ?? null;
+  if (selectedId !== GENERAL && !selected()) selectedId = projects[0]?.id ?? null;
   render();
+}
+
+/** Folders from the picker, or dropped on the window. */
+async function addFolders(paths) {
+  for (const path of paths) {
+    const project = await call('add_project', { path }).catch(() => null);
+    if (project) selectedId = project.id;
+  }
+  await load();
 }
 
 async function addProject() {
   const path = await call('pick_folder');
-  if (!path) return;
-  const project = await call('add_project', { path });
-  selectedId = project.id;
-  await load();
+  if (path) await addFolders([path]);
 }
+
+window.__TAURI__.webview.getCurrentWebview().onDragDropEvent(({ payload }) => {
+  document.body.classList.toggle('dropping', payload.type === 'enter' || payload.type === 'over');
+  if (payload.type === 'drop') addFolders(payload.paths);
+});
 
 /** Runs something and takes the user straight to its output. */
 async function launch(project, script) {
@@ -47,6 +68,96 @@ function confirmButton(id, label, confirmLabel, onConfirm) {
       render();
     },
   }, armed ? confirmLabel : label);
+}
+
+async function saveSettings(change) {
+  const next = { ...settings, ...change };
+  if (await call('update_settings', { settings: next }).then(() => true, () => false)) settings = next;
+  render();
+}
+
+async function setLaunchAtLogin(enabled) {
+  await call('set_login_item', { enabled }).catch(() => {});
+  launchAtLogin = await invoke('login_item');
+  render();
+}
+
+function shortcutLabel(shortcut) {
+  const keys = shortcut.split('+').map((key) => key.replace(/^(Key|Digit)/, ''));
+  return MAC ? keys.map((key) => KEY_SYMBOLS[key] ?? key).join('') : keys.join('+');
+}
+
+window.addEventListener('keydown', (event) => {
+  if (!recording) return;
+  event.preventDefault();
+  if (event.key === 'Escape') {
+    recording = false;
+    render();
+  } else if (!['Control', 'Alt', 'Shift', 'Meta'].includes(event.key) && (event.ctrlKey || event.altKey || event.metaKey)) {
+    // Without Ctrl, Alt or Cmd, a global shortcut would swallow that key everywhere.
+    recording = false;
+    const modifiers = [event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Super'];
+    saveSettings({ shortcut: [...modifiers, event.code].filter(Boolean).join('+') });
+  }
+}, true);
+
+function shortcutField() {
+  const label = recording ? 'Type a shortcut…' : settings.shortcut ? shortcutLabel(settings.shortcut) : 'Record shortcut';
+  return h('div', { class: 'inline' },
+    settings.shortcut && !recording && iconButton('close', 'Remove shortcut', () => saveSettings({ shortcut: null })),
+    h('button', {
+      class: `btn keys ${recording ? 'recording' : ''}`,
+      onClick: () => { recording = !recording; render(); },
+    }, label));
+}
+
+const settingText = (title, note) => h('div', { class: 'meta' },
+  h('div', { class: 'title' }, title),
+  note && h('div', { class: 'sub' }, note));
+
+const setting = (title, note, control) => h('div', { class: 'setting' }, settingText(title, note), control);
+
+const switchSetting = (title, note, checked, onChange) => h('label', { class: 'setting' },
+  settingText(title, note),
+  h('input', {
+    type: 'checkbox', class: 'switch', role: 'switch', checked, onChange: (event) => onChange(event.target.checked),
+  }));
+
+const group = (title, ...rows) => h('section', {}, h('h2', {}, title), h('div', { class: 'group' }, rows));
+
+function segmented(label, options, value, onPick) {
+  return h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label },
+    options.map(([text, option]) => h('button', {
+      class: option === value ? 'on' : '',
+      role: 'radio',
+      'aria-checked': String(option === value),
+      onClick: () => onPick(option),
+    }, text)));
+}
+
+function renderGeneral() {
+  const fontSize = h('select', {
+    'aria-label': 'Terminal font size',
+    onChange: (event) => saveSettings({ terminalFontSize: Number(event.target.value) }),
+  }, FONT_SIZES.map((size) => h('option', { value: size }, `${size} px`)));
+  fontSize.value = settings.terminalFontSize;
+  const themes = [['System', null], ['Light', 'light'], ['Dark', 'dark']];
+
+  head.replaceChildren(h('h1', {}, 'General'));
+  body.replaceChildren(
+    group('Startup',
+      switchSetting('Launch at login', 'ScriptDec starts in the menu bar.', launchAtLogin, setLaunchAtLogin)),
+    group('Keyboard',
+      setting('Open ScriptDec', 'Shows the menu bar window from any app.', shortcutField())),
+    group('Notifications',
+      switchSetting('Notify when a script fails', 'Not when you stop it, or while its terminal is in front.',
+        settings.notifyOnFailure, (notifyOnFailure) => saveSettings({ notifyOnFailure }))),
+    group('Appearance',
+      setting('Theme', null, segmented('Theme', themes, settings.theme ?? null, (theme) => saveSettings({ theme }))),
+      setting('Terminal font size', null, fontSize)),
+    group('About',
+      setting(`ScriptDec ${version}`, 'Free and open source under the MIT License.',
+        h('button', { class: 'btn', onClick: () => call('open_homepage') }, 'GitHub'))));
 }
 
 function nodeSection(project) {
@@ -135,7 +246,7 @@ function openEditor(state) {
   editing = state;
   confirming = null;
   render();
-  detail.querySelector('.script-editor input')?.focus();
+  body.querySelector('.script-editor input')?.focus();
 }
 
 const closeEditor = () => { editing = null; render(); };
@@ -232,13 +343,13 @@ function scriptsSection(project) {
     results);
 }
 
-function renderDetail(project) {
+function renderProject(project) {
   const remove = async () => {
     await call('remove_project', { id: project.id });
     await load();
   };
   const { error } = project.scan;
-  detail.replaceChildren(
+  head.replaceChildren(
     h('input', {
       class: 'name-input', value: project.name, 'aria-label': 'Project name',
       onChange: async (e) => {
@@ -248,42 +359,46 @@ function renderDetail(project) {
       },
     }),
     h('div', { class: 'path-row' },
-      h('span', { class: 'path', title: project.path }, project.path),
+      h('span', { class: 'path', title: project.path, 'data-tauri-drag-region': 'false' }, project.path),
       h('button', { class: 'link', onClick: () => call('reveal', { path: project.path }) }, 'Show in folder'),
-      confirmButton('remove', 'Remove', 'Remove from ScriptDec?', remove)),
-    ...(error
-      ? [h('p', { class: 'note warn' }, error)]
-      : [nodeSection(project), toolkitSection(project), customSection(project), scriptsSection(project)]),
-  );
+      confirmButton('remove', 'Remove', 'Remove from ScriptDec?', remove)));
+  body.replaceChildren(...(error
+    ? [h('p', { class: 'note warn' }, error)]
+    : [nodeSection(project), toolkitSection(project), customSection(project), scriptsSection(project)]));
+}
+
+function navItem(id, glyph, label) {
+  return h('button', {
+    class: `item ${id === selectedId ? 'active' : ''}`,
+    'aria-current': id === selectedId ? 'page' : false,
+    onClick: () => {
+      selectedId = id;
+      filter = '';
+      confirming = null;
+      editing = null;
+      recording = false;
+      body.scrollTop = 0;
+      render();
+    },
+  }, icon(glyph), h('span', { class: 'label' }, label));
 }
 
 function render() {
   sidebar.replaceChildren(
-    h('div', { class: 'projects' }, projects.map((project) => h('button', {
-      class: `item ${project.id === selectedId ? 'active' : ''}`,
-      onClick: () => { selectedId = project.id; filter = ''; confirming = null; editing = null; render(); },
-    }, project.name))),
-    h('div', { class: 'foot' },
-      h('label', { class: 'check' },
-        h('input', {
-          type: 'checkbox',
-          checked: launchAtLogin,
-          onChange: async (event) => {
-            await call('set_login_item', { enabled: event.target.checked }).catch(() => {});
-            launchAtLogin = await invoke('login_item');
-            render();
-          },
-        }),
-        'Launch at login'),
-      h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),
-      h('button', { class: 'btn', onClick: () => invoke('quit') }, 'Quit ScriptDec')),
+    navItem(GENERAL, 'gear', 'General'),
+    h('div', { class: 'nav-title' }, h('span', {}, 'Projects'), iconButton('plus', 'Add project', addProject)),
+    h('div', { class: 'projects' }, projects.map((project) => navItem(project.id, 'folder', project.name))),
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onClick: () => invoke('quit') }, 'Quit ScriptDec')),
   );
   const project = selected();
-  if (project) renderDetail(project);
+  if (selectedId === GENERAL) renderGeneral();
+  else if (project) renderProject(project);
   else {
-    detail.replaceChildren(h('div', { class: 'empty' },
+    head.replaceChildren(h('h1', {}, 'Welcome to ScriptDec'));
+    body.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'Add a folder with a package.json to get started.'),
-      h('button', { class: 'btn primary', onClick: addProject }, 'Add project')));
+      h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),
+      h('p', { class: 'note' }, 'Or drop folders on this window.')));
   }
 }
 

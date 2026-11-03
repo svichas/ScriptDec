@@ -8,7 +8,7 @@ const token = (name) => getComputedStyle(screen).getPropertyValue(name).trim();
 
 const term = new window.Terminal({
   fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-  fontSize: 12,
+  fontSize: (await invoke('settings')).terminalFontSize,
   scrollback: 10000,
   convertEol: false,
   theme: {
@@ -98,6 +98,10 @@ async function load() {
 
 listen('sessions-changed', load);
 listen('select-session', ({ payload }) => select(payload));
+listen('settings-changed', ({ payload }) => {
+  term.options.fontSize = payload.terminalFontSize;
+  fit.fit();
+});
 
 const wanted = Number(new URLSearchParams(location.search).get('session'));
 if (wanted) await select(wanted);
