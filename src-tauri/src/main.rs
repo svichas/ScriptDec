@@ -5,7 +5,7 @@ mod node;
 mod project;
 mod sessions;
 
-use config::{Config, Project};
+use config::{Config, Project, Settings};
 use project::Scan;
 use serde::Serialize;
 use sessions::{SessionView, Sessions, Spec, Status};
@@ -24,8 +24,11 @@ use tauri::{
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+
+const HOMEPAGE: &str = "https://github.com/svichas/ScriptDec";
 
 struct App {
     config: Mutex<Config>,
@@ -150,6 +153,37 @@ fn set_login_item(app: AppHandle, enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn settings(state: State<App>) -> Settings {
+    state.config.lock().unwrap().settings.clone()
+}
+
+/// Async: the shortcut is registered on the main thread, and this waits for it.
+#[tauri::command]
+async fn update_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
+    let state = app.state::<App>();
+    let old = state.config.lock().unwrap().settings.clone();
+    if settings.shortcut != old.shortcut {
+        if let Err(error) = set_shortcut(&app, settings.shortcut.as_deref()) {
+            let _ = set_shortcut(&app, old.shortcut.as_deref());
+            return Err(error);
+        }
+    }
+    app.set_theme(settings.theme);
+    state.edit(|config| {
+        config.settings = settings.clone();
+        Ok(())
+    })?;
+    app.emit("settings-changed", settings).map_err(|e| e.to_string())
+}
+
+fn set_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
+    let shortcuts = app.global_shortcut();
+    shortcuts.unregister_all().map_err(|e| e.to_string())?;
+    let Some(shortcut) = shortcut else { return Ok(()) };
+    shortcuts.register(shortcut).map_err(|e| format!("Can't use {shortcut} as a shortcut: {e}"))
+}
+
+#[tauri::command]
 fn run(state: State<App>, project_id: String, label: String, command: String) -> Result<u32, String> {
     let project = state.project(&project_id)?;
     let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
@@ -209,12 +243,21 @@ fn resize(state: State<App>, id: u32, cols: u16, rows: u16) {
 fn show_window(app: &AppHandle, label: &str, url: String, title: &str, size: (f64, f64)) -> Result<(), String> {
     let window = match app.get_webview_window(label) {
         Some(window) => window,
-        None => WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-            .title(title)
-            .inner_size(size.0, size.1)
-            .min_inner_size(520.0, 320.0)
-            .build()
-            .map_err(|e| e.to_string())?,
+        None => {
+            let theme = app.state::<App>().config.lock().unwrap().settings.theme;
+            let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+                .title(title)
+                .theme(theme)
+                .inner_size(size.0, size.1)
+                .min_inner_size(520.0, 320.0);
+            // The page draws the title bar itself; the lights sit centred in the terminal's 40px tab bar.
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(16.0, 13.0));
+            builder.build().map_err(|e| e.to_string())?
+        }
     };
     show_in_dock(app, true);
     window.show().and_then(|_| window.set_focus()).map_err(|e| e.to_string())
@@ -239,6 +282,11 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
         return Err(format!("Refusing to open {url}"));
     }
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_homepage(app: AppHandle) -> Result<(), String> {
+    app.opener().open_url(HOMEPAGE, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -319,7 +367,8 @@ fn sessions_changed(app: &AppHandle) {
 
 fn script_failed(app: &AppHandle, session: &SessionView) {
     // The output is already in front of them, and `pnpm outdated` exiting 1 isn't news.
-    if app.get_webview_window("terminal").is_some_and(|window| window.is_focused().unwrap_or(false)) {
+    let watching = app.get_webview_window("terminal").is_some_and(|window| window.is_focused().unwrap_or(false));
+    if watching || !app.state::<App>().config.lock().unwrap().settings.notify_on_failure {
         return;
     }
     let notification = app.notification().builder();
@@ -370,12 +419,22 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| {
+                    if event.state == ShortcutState::Pressed {
+                        toggle_popover(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = config::load(&config_path);
             let first_run = config.projects.is_empty();
+            let settings = config.settings.clone();
             let (changed, failed) = (app.handle().clone(), app.handle().clone());
             app.manage(App {
                 config: Mutex::new(config),
@@ -388,6 +447,10 @@ fn main() {
             });
             show_in_dock(app.handle(), false);
             build_tray(app.handle())?;
+            app.set_theme(settings.theme);
+            if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
+                eprintln!("{error}");
+            }
             if first_run {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move { open_settings(handle).await });
@@ -421,6 +484,8 @@ fn main() {
             edit_script,
             login_item,
             set_login_item,
+            settings,
+            update_settings,
             run,
             list_sessions,
             stop,
@@ -433,6 +498,7 @@ fn main() {
             open_settings,
             open_terminal,
             open_url,
+            open_homepage,
             reveal,
             hide_popover,
             quit,

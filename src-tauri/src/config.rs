@@ -1,10 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
+use tauri::Theme;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
     pub projects: Vec<Project>,
+    pub settings: Settings,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Settings {
+    /// Opens the menu bar window from anywhere, as an accelerator such as "Alt+Super+Space".
+    pub shortcut: Option<String>,
+    pub notify_on_failure: bool,
+    /// None follows the system.
+    pub theme: Option<Theme>,
+    pub terminal_font_size: u8,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { shortcut: None, notify_on_failure: true, theme: None, terminal_font_size: 12 }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -71,8 +90,18 @@ mod tests {
     fn round_trips() {
         let path = temp_file("trip");
         let project = Project { id: "a".into(), name: "ui".into(), ..Default::default() };
-        save(&path, &Config { projects: vec![project] }).unwrap();
+        save(&path, &Config { projects: vec![project], ..Default::default() }).unwrap();
         assert_eq!(load(&path).projects[0].name, "ui");
+    }
+
+    #[test]
+    fn a_config_from_before_settings_gets_the_defaults() {
+        let path = temp_file("old");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"{"projects": []}"#).unwrap();
+        let settings = load(&path).settings;
+        assert!(settings.notify_on_failure);
+        assert_eq!((settings.terminal_font_size, settings.theme, settings.shortcut), (12, None, None));
     }
 
     #[test]

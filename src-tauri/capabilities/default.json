@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "ScriptDec windows; everything else goes through the app's own commands",
   "windows": ["popover", "settings", "terminal"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

@@ -30,7 +30,9 @@ const search = h('input', {
   onKeydown: onSearchKey,
 });
 const list = h('div', { class: 'list' });
-const header = h('header', {}, search, iconButton('gear', 'Settings', () => call('open_settings')));
+const header = h('header', {},
+  h('label', { class: 'search' }, icon('search'), search),
+  iconButton('gear', 'Settings', () => call('open_settings')));
 document.body.append(h('div', { class: 'panel' }, header, list));
 
 const sessionFor = (project, script) =>
