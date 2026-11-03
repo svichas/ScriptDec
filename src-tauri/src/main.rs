@@ -290,6 +290,11 @@ fn open_homepage(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_latest_release(app: AppHandle) -> Result<(), String> {
+    app.opener().open_url(format!("{HOMEPAGE}/releases/latest"), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn reveal(app: AppHandle, path: String) -> Result<(), String> {
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
@@ -499,6 +504,7 @@ fn main() {
             open_terminal,
             open_url,
             open_homepage,
+            open_latest_release,
             reveal,
             hide_popover,
             quit,
