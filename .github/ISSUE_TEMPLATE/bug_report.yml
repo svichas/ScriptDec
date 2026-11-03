@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in ScriptDec doesn't work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a pnpm monorepo
+        2. Run a workspace package's dev script
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: ScriptDec version
+      description: Settings > General > About
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: macOS 26.1
+    validations:
+      required: true
+  - type: input
+    id: tools
+    attributes:
+      label: Package manager and Node version manager
+      placeholder: pnpm 10 with fnm
