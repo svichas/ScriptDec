@@ -40,13 +40,15 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 </picture>
 
 - **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands and `package.json` scripts.
-- **General.** Launch at login, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, and the terminal font size.
+- **General.** Launch at login, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
 
 ## Install
 
 Download the `.dmg` from the [latest release](https://github.com/svichas/ScriptDec/releases/latest), open it and drag ScriptDec to Applications.
 
 The app is ad-hoc signed, not notarized, so macOS blocks the first launch. Open it once, then click Open Anyway in System Settings > Privacy & Security.
+
+From 0.2.0 on, ScriptDec updates itself. When a new release is out, a banner at the bottom of the menu bar window offers it: click Update, then Restart Now once it has downloaded. It waits for you because restarting stops your running scripts.
 
 ## Build from source
 
@@ -85,6 +87,7 @@ ScriptDec is a [Tauri 2](https://tauri.app) app: Rust for the processes, plain H
 - `ui/` has no build step. `ui/vendor/` holds xterm.js, copied from `node_modules`. The colours are the tokens at the top of `ui/app.css`.
 - `src-tauri/icons/icon.svg` and `tray.svg` are the icon sources. `pnpm tauri icon` turns them into the PNG, ICNS and ICO files beside them.
 - Scripts run through your login shell, so they get the same `PATH` as your terminal. The project's Node version is set after your rc files, so it wins over your version manager's default.
+- `src-tauri/src/update.rs` updates the app from the latest GitHub release's `latest.json`, through the [Tauri updater](https://tauri.app/plugin/updater/). It only installs packages signed with the key whose public half is in `tauri.conf.json`.
 - Projects and settings are stored in `config.json` in the app config folder (`~/Library/Application Support/com.scriptdec.desktop/` on macOS).
 
 ## Contributing

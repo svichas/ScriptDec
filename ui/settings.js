@@ -1,6 +1,7 @@
 import {
   call, h, icon, iconButton, invoke, MAC, runScript, saveProject, shortPackage, togglePin,
 } from './shared.js';
+import { checkForUpdates, updateBanner } from './update.js';
 
 const MAX_ROWS = 80;
 const GENERAL = 'general';
@@ -17,11 +18,13 @@ let confirming = null; // the destructive action waiting for its second click
 let editing = null; // the package.json script being changed: { key, package, old, name, body }; old is null for a new one
 let recording = false; // the shortcut button is waiting for keys
 let launchAtLogin = false;
+let checking = false; // Check for Updates is waiting on GitHub
+let upToDate = false; // and found nothing newer
 
 const sidebar = h('nav', { class: 'sidebar', 'aria-label': 'Sections', 'data-tauri-drag-region': 'deep' });
 const head = h('header', { class: 'page-head', 'data-tauri-drag-region': 'deep' });
 const body = h('div', { class: 'page-body' });
-document.body.append(h('div', { class: 'settings' }, sidebar, h('main', { class: 'detail' }, head, body)));
+document.body.append(h('div', { class: 'settings' }, sidebar, h('main', { class: 'detail' }, head, body, updateBanner)));
 
 const selected = () => projects.find((p) => p.id === selectedId);
 
@@ -79,6 +82,15 @@ async function saveSettings(change) {
 async function setLaunchAtLogin(enabled) {
   await call('set_login_item', { enabled }).catch(() => {});
   launchAtLogin = await invoke('login_item');
+  render();
+}
+
+async function checkNow() {
+  checking = true;
+  render();
+  const status = await checkForUpdates().catch(() => null);
+  checking = false;
+  upToDate = status?.state === 'idle';
   render();
 }
 
@@ -156,8 +168,11 @@ function renderGeneral() {
       setting('Theme', null, segmented('Theme', themes, settings.theme ?? null, (theme) => saveSettings({ theme }))),
       setting('Terminal font size', null, fontSize)),
     group('About',
-      setting(`ScriptDec ${version}`, 'Free and open source under the MIT License.',
-        h('button', { class: 'btn', onClick: () => call('open_homepage') }, 'GitHub'))));
+      setting(`ScriptDec ${version}`,
+        upToDate ? 'You have the latest version.' : 'Free and open source under the MIT License.',
+        h('div', { class: 'inline' },
+          h('button', { class: 'btn', disabled: checking, onClick: checkNow }, checking ? 'Checking…' : 'Check for Updates'),
+          h('button', { class: 'btn', onClick: () => call('open_homepage') }, 'GitHub')))));
 }
 
 function nodeSection(project) {

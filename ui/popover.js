@@ -2,6 +2,7 @@ import {
   call, dotClass, h, icon, iconButton, invoke, isLive, listen, nodeLabel, runScript, scriptLabel,
   scriptsOf, statusText, togglePin, urlLabel,
 } from './shared.js';
+import { updateBanner } from './update.js';
 
 const MAX_RESULTS = 60;
 
@@ -33,7 +34,7 @@ const list = h('div', { class: 'list' });
 const header = h('header', {},
   h('label', { class: 'search' }, icon('search'), search),
   iconButton('gear', 'Settings', () => call('open_settings')));
-document.body.append(h('div', { class: 'panel' }, header, list));
+document.body.append(h('div', { class: 'panel' }, header, list, updateBanner));
 
 const sessionFor = (project, script) =>
   sessions.find((s) => s.projectId === project.id && s.command === script.command);

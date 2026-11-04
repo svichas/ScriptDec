@@ -4,6 +4,7 @@ mod config;
 mod node;
 mod project;
 mod sessions;
+mod update;
 
 use config::{Config, Project, Settings};
 use project::Scan;
@@ -435,6 +436,8 @@ fn main() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::Updates::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
             let config = config::load(&config_path);
@@ -505,6 +508,9 @@ fn main() {
             open_url,
             open_homepage,
             open_latest_release,
+            update::check_for_update,
+            update::download_update,
+            update::install_update,
             reveal,
             hide_popover,
             quit,
