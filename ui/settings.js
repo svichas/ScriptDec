@@ -162,7 +162,9 @@ function renderGeneral() {
   head.replaceChildren(h('h1', {}, 'General'));
   body.replaceChildren(
     group('Startup',
-      switchSetting('Launch at login', 'ScriptDec starts in the menu bar.', launchAtLogin, setLaunchAtLogin)),
+      switchSetting('Launch at login', 'ScriptDec starts in the menu bar.', launchAtLogin, setLaunchAtLogin),
+      switchSetting('Reopen running scripts', 'Starts the scripts that were still running when ScriptDec quit.',
+        settings.reopenScripts, (reopenScripts) => saveSettings({ reopenScripts }))),
     group('Keyboard',
       setting('Open ScriptDec', 'Shows the menu bar window from any app.', shortcutField())),
     group('Notifications',
