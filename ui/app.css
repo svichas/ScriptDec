@@ -162,6 +162,7 @@ button.btn.danger { color: var(--bad); }
   border: 1px solid var(--line);
 }
 .update[hidden] { display: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .detail .update { margin: 0 28px 16px; }
 .update progress {
   display: block;

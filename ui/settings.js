@@ -1,5 +1,5 @@
 import {
-  call, h, icon, iconButton, invoke, MAC, runScript, saveProject, shortPackage, togglePin,
+  call, h, icon, iconButton, invoke, listen, MAC, runScript, saveProject, shortPackage, togglePin,
 } from './shared.js';
 import { checkForUpdates, updateBanner } from './update.js';
 
@@ -93,6 +93,10 @@ async function checkNow() {
   upToDate = status?.state === 'idle';
   render();
 }
+
+listen('update-changed', ({ payload }) => {
+  if (upToDate && payload.state !== 'idle') { upToDate = false; render(); }
+});
 
 function shortcutLabel(shortcut) {
   const keys = shortcut.split('+').map((key) => key.replace(/^(Key|Digit)/, ''));

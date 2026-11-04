@@ -40,6 +40,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
 Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, then push a tag such as `v0.2.0`. The Release workflow builds the macOS and Windows apps and attaches them to a draft release, with signed update packages and the `latest.json` that installed apps read.
 
-Check that `latest.json` lists `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, then publish the draft. Publishing is what ships the update: installed apps find it at `releases/latest/download/latest.json`.
+Check that `latest.json` lists `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, and that neither build log warns that the key doesn't match the public key, then publish the draft. Publishing is what ships the update: installed apps find it at `releases/latest/download/latest.json`.
+
+To re-run the macOS job, delete `latest.json` from the draft first. tauri-action keeps the macOS entries it finds there, so they would carry the previous run's signatures and Macs would refuse the update.
 
 The workflow signs with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. Keep a copy of the key: without it, installed apps can't be updated, only reinstalled.

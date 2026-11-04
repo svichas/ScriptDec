@@ -45,4 +45,4 @@ jobs:
           releaseName: ScriptDec ${{ github.ref_name }}
           releaseBody: See the README for install notes. The macOS app is not notarized, so the first launch needs System Settings > Privacy & Security > Open Anyway.
           releaseDraft: true
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json

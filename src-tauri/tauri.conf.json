@@ -37,7 +37,6 @@
   "bundle": {
     "active": true,
     "targets": ["app", "nsis"],
-    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "Run your package.json scripts from the menu bar",
     "copyright": "Copyright © 2026 Stefanos Vichas. MIT License.",

@@ -11,6 +11,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// Windows ask on every focus; a few checks a day is plenty.
 const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
+/// After a failed check: offline, or a release without a latest.json.
+const RETRY: Duration = Duration::from_secs(15 * 60);
 
 /// What the update banner shows. Every change reaches every window as `update-changed`.
 #[derive(Clone, Default, Serialize)]
@@ -35,7 +37,7 @@ struct Inner {
     status: Status,
     update: Option<Update>,
     package: Option<Vec<u8>>,
-    checked_at: Option<Instant>,
+    next_check: Option<Instant>,
 }
 
 impl Updates {
@@ -50,45 +52,58 @@ fn busy(status: &Status) -> bool {
     matches!(status, Status::Downloading { .. } | Status::Ready { .. } | Status::Installing { .. })
 }
 
+fn due(status: &Status, next_check: Option<Instant>, force: bool) -> bool {
+    !busy(status) && (force || next_check.is_none_or(|at| Instant::now() >= at))
+}
+
 async fn check(app: &AppHandle) -> tauri_plugin_updater::Result<Option<Update>> {
     let handle = app.clone();
     app.updater_builder()
-        // Windows' installer exits the app straight away, so stop the scripts as quitting does.
-        .on_before_exit(move || handle.state::<crate::App>().sessions.shutdown())
+        // A stalled connection, behind a captive portal say, would otherwise hang the check or download for good.
+        .configure_client(|client| client.connect_timeout(Duration::from_secs(15)).read_timeout(Duration::from_secs(30)))
+        // Windows' installer exits the app straight away: stop the scripts as quitting does, and
+        // remove the tray icon, which is the cleanup this hook replaces.
+        .on_before_exit(move || {
+            handle.state::<crate::App>().sessions.shutdown();
+            handle.cleanup_before_exit();
+        })
         .build()?
         .check()
         .await
 }
 
-/// The update status, after asking GitHub for a newer release when the last check is a few hours old.
+/// The update status, after asking GitHub for a newer release when a check is due.
 /// `force` asks anyway, and reports a failed check instead of keeping the last status.
 #[tauri::command]
 pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Status, String> {
+    // `pnpm dev` runs the binary straight from target/, which the updater would swap out whole.
+    if cfg!(debug_assertions) {
+        return if force { Err("Development builds don't update".into()) } else { Ok(Status::Idle) };
+    }
     let updates = app.state::<Updates>();
     {
         let inner = updates.0.lock().unwrap();
-        let fresh = inner.checked_at.is_some_and(|at| at.elapsed() < RECHECK);
-        if busy(&inner.status) || (fresh && !force) {
+        if !due(&inner.status, inner.next_check, force) {
             return Ok(inner.status.clone());
         }
     }
-    let found = match check(&app).await {
-        Ok(found) => found,
-        Err(error) if force => return Err(format!("Couldn't check for updates: {error}")),
-        Err(_) => return Ok(updates.0.lock().unwrap().status.clone()), // offline: the next focus tries again
-    };
+    let checked = check(&app).await;
     let status = {
         let mut inner = updates.0.lock().unwrap();
-        if busy(&inner.status) {
-            return Ok(inner.status.clone()); // another window started the download meanwhile
+        inner.next_check = Some(Instant::now() + if checked.is_ok() { RECHECK } else { RETRY });
+        match checked {
+            Err(error) if force => return Err(format!("Couldn't check for updates: {error}")),
+            Err(_) => return Ok(inner.status.clone()),
+            Ok(_) if busy(&inner.status) => return Ok(inner.status.clone()), // a download started meanwhile
+            Ok(found) => {
+                inner.status = match &found {
+                    Some(update) => Status::Available { version: update.version.clone() },
+                    None => Status::Idle,
+                };
+                inner.update = found;
+                inner.status.clone()
+            }
         }
-        inner.checked_at = Some(Instant::now());
-        inner.status = match &found {
-            Some(update) => Status::Available { version: update.version.clone() },
-            None => Status::Idle,
-        };
-        inner.update = found;
-        inner.status.clone()
     };
     let _ = app.emit("update-changed", &status);
     Ok(status)
@@ -123,17 +138,22 @@ pub async fn download_update(app: AppHandle) -> Result<(), String> {
             || {},
         )
         .await;
-    match downloaded {
+    let mut inner = updates.0.lock().unwrap();
+    let result = match downloaded {
         Ok(package) => {
-            updates.0.lock().unwrap().package = Some(package);
-            updates.set(&app, Status::Ready { version });
+            inner.package = Some(package); // under the same lock as Ready, so Restart Now always finds it
+            inner.status = Status::Ready { version };
             Ok(())
         }
         Err(error) => {
-            updates.set(&app, Status::Failed { version });
+            inner.status = Status::Failed { version };
             Err(format!("Couldn't download the update: {error}"))
         }
-    }
+    };
+    let status = inner.status.clone();
+    drop(inner);
+    let _ = app.emit("update-changed", status);
+    result
 }
 
 /// Installs the downloaded update and restarts into it. On Windows the installer closes and reopens the app.
@@ -142,14 +162,14 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     let updates = app.state::<Updates>();
     let (update, package) = {
         let mut inner = updates.0.lock().unwrap();
-        let ready = matches!(inner.status, Status::Ready { .. });
-        match (ready, inner.update.clone(), inner.package.take()) {
-            (true, Some(update), Some(package)) => {
-                inner.status = Status::Installing { version: update.version.clone() };
-                (update, package)
-            }
-            _ => return Ok(()), // a second click while installing
+        if !matches!(inner.status, Status::Ready { .. }) {
+            return Ok(()); // a second click while installing
         }
+        let (Some(update), Some(package)) = (inner.update.clone(), inner.package.take()) else {
+            return Ok(()); // Ready always has both
+        };
+        inner.status = Status::Installing { version: update.version.clone() };
+        (update, package)
     };
     let version = update.version.clone();
     let _ = app.emit("update-changed", Status::Installing { version: version.clone() });
@@ -174,5 +194,18 @@ mod tests {
             json!({ "state": "downloading", "version": "0.2.0", "percent": 42 })
         );
         assert_eq!(serde_json::to_value(Status::Idle).unwrap(), json!({ "state": "idle" }));
+    }
+
+    #[test]
+    fn checks_when_due_or_asked_but_never_mid_update() {
+        let version = || "0.2.0".to_string();
+        let (past, future) = (Some(Instant::now() - Duration::from_secs(1)), Some(Instant::now() + RETRY));
+        assert!(due(&Status::Idle, None, false));
+        assert!(due(&Status::Idle, past, false));
+        assert!(!due(&Status::Idle, future, false));
+        assert!(due(&Status::Idle, future, true));
+        assert!(due(&Status::Failed { version: version() }, future, true));
+        assert!(!due(&Status::Downloading { version: version(), percent: Some(5) }, None, true));
+        assert!(!due(&Status::Ready { version: version() }, None, true));
     }
 }
