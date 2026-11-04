@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ScriptDec",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.scriptdec.desktop",
   "build": { "frontendDist": "../ui" },
   "app": {
@@ -24,7 +24,14 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost https://api.github.com"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwQkEyNkJDOTZCQTA4N0MKUldSOENMcVd2Q2E2TVBOZCsxNElNb0ZLZDMvVTlhNjNQeVBIMDFhZGZTZjI2Ly9tbU5iYkRwM04K",
+      "endpoints": ["https://github.com/svichas/ScriptDec/releases/latest/download/latest.json"],
+      "requireSignedVersion": true
     }
   },
   "bundle": {

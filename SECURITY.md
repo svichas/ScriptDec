@@ -10,4 +10,5 @@ ScriptDec runs the scripts in your `package.json` files with your user's permiss
 
 - running a command other than the script you started,
 - letting a script name, workspace name or `.nvmrc` from a repo inject shell commands,
-- opening anything other than a `localhost` address found in script output.
+- opening anything other than a `localhost` address found in script output,
+- installing an update that isn't signed with the release key.

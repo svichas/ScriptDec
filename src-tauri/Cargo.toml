@@ -1,6 +1,6 @@
 [package]
 name = "scriptdec"
-version = "0.1.0"
+version = "0.2.0"
 description = "A menu bar app for running your package.json scripts in the background"
 license = "MIT"
 repository = "https://github.com/svichas/ScriptDec"
@@ -20,6 +20,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 portable-pty = "0.9"
 glob = "0.3"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
