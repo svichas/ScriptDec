@@ -1,6 +1,6 @@
 [package]
 name = "scriptdec"
-version = "0.1.0"
+version = "0.2.0"
 description = "A menu bar app for running your package.json scripts in the background"
 license = "MIT"
 repository = "https://github.com/svichas/ScriptDec"
