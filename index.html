@@ -326,7 +326,7 @@
       <div class="wrap">
         <p class="eyebrow">Install</p>
         <h2>Download ScriptDec<span class="ver" data-release></span></h2>
-        <p class="intro">Every release is built from its tag by the <a href="https://github.com/svichas/ScriptDec/actions/workflows/release.yml">Release workflow</a> on GitHub Actions and published on <a href="https://github.com/svichas/ScriptDec/releases">GitHub Releases</a> with its release notes.</p>
+        <p class="intro">Every release is built from its tag by the <a href="https://github.com/svichas/ScriptDec/actions/workflows/release.yml">Release workflow</a> on GitHub Actions and published on <a href="https://github.com/svichas/ScriptDec/releases">GitHub Releases</a> with its release notes. From 0.2.0 on, ScriptDec updates itself: a banner in the menu bar window offers each new release, and the app restarts into it when you click <b>Restart Now</b>.</p>
         <div class="platforms">
           <div class="platform">
             <h3>macOS</h3>
@@ -459,7 +459,7 @@
               <ul>
                 <li><b>Projects.</b> Add folders with <b>+</b> or by dropping them on the window. Rename a project by editing its name, or remove it from ScriptDec; your files aren't touched.</li>
                 <li><b>Toolkit.</b> Install, Outdated, Update, Audit and Clean reinstall run with the project's package manager, each in its own terminal like a script. Clean reinstall deletes <code>node_modules</code> first, so it asks before it runs.</li>
-                <li><b>General.</b> Launch at login, the global shortcut, failure notifications, a system, light or dark theme, and the terminal font size.</li>
+                <li><b>General.</b> Launch at login, the global shortcut, failure notifications, a system, light or dark theme, the terminal font size, and <b>Check for Updates</b>.</li>
               </ul>
             </article>
 
@@ -470,9 +470,10 @@
                 <li><code>src-tauri/src/sessions.rs</code> owns the PTYs: scrollback, stop escalation and URL detection.</li>
                 <li><code>src-tauri/src/project.rs</code> reads and edits <code>package.json</code> and finds workspaces. <code>node.rs</code> resolves Node versions across nvm, fnm and Volta.</li>
                 <li><code>ui/</code> has no framework and no build step. The terminal is <a href="https://xtermjs.org">xterm.js</a>, vendored in <code>ui/vendor/</code>.</li>
+                <li><code>src-tauri/src/update.rs</code> updates the app from the latest GitHub release with the <a href="https://tauri.app/plugin/updater/">Tauri updater</a>.</li>
                 <li>Projects and settings live in <code>config.json</code> in the app's config folder: <code>~/Library/Application Support/com.scriptdec.desktop/</code> on macOS, <code>%APPDATA%\com.scriptdec.desktop\</code> on Windows.</li>
               </ul>
-              <p class="note"><b>No telemetry.</b> ScriptDec has no account, no analytics and no update check, and it only opens <code>localhost</code> links found in script output.</p>
+              <p class="note"><b>No telemetry.</b> ScriptDec has no account and no analytics. On its own it only fetches the latest release's <code>latest.json</code> from GitHub, at most every six hours, and it installs only updates signed with the release key. It only opens <code>localhost</code> links found in script output.</p>
             </article>
 
             <article id="build">
@@ -545,7 +546,7 @@ pnpm install</code></pre>
             <h3>Before you open a pull request</h3>
             <pre><code>pnpm test
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings</code></pre>
-            <p>CI runs both on macOS for every pull request. To release, bump the version in <code>package.json</code>, <code>src-tauri/Cargo.toml</code> and <code>src-tauri/tauri.conf.json</code>, then push a tag such as <code>v0.2.0</code>.</p>
+            <p>CI runs both on macOS for every pull request. To release, bump the version in <code>package.json</code>, <code>src-tauri/Cargo.toml</code> and <code>src-tauri/tauri.conf.json</code>, then push a tag such as <code>v0.2.0</code>. Publishing the draft release ships the update; <a href="https://github.com/svichas/ScriptDec/blob/main/CONTRIBUTING.md#releasing">CONTRIBUTING.md</a> has the checks to do first.</p>
           </div>
         </div>
       </div>
