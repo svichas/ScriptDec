@@ -93,7 +93,7 @@ fn listen(path: &Path, tools: Arc<Tools>) -> Result<Listener, String> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(fail)?;
     }
-    let _ = fs::remove_file(path); // left behind when the app last quit
+    let _ = fs::remove_file(path); // left behind if the app crashed
     let listener = UnixListener::bind(path).map_err(fail)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(fail)?;
     let stopped = Arc::new(AtomicBool::new(false));

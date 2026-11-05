@@ -544,6 +544,9 @@ fn main() {
         .expect("failed to start ScriptDec")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                // First, so an agent can't start a script that the shutdown would miss.
+                #[cfg(unix)]
+                let _ = mcp::enable(app, false);
                 app.state::<App>().sessions.shutdown();
             }
         });
