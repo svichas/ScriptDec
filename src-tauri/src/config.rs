@@ -24,6 +24,8 @@ pub struct Settings {
     pub terminal_font_size: u8,
     /// Starts the scripts in `Config::reopen` at launch.
     pub reopen_scripts: bool,
+    /// Lets AI agents read and restart scripts over MCP; see mcp.rs.
+    pub mcp: bool,
 }
 
 impl Default for Settings {
@@ -35,6 +37,7 @@ impl Default for Settings {
             theme: None,
             terminal_font_size: 12,
             reopen_scripts: false,
+            mcp: false,
         }
     }
 }
@@ -151,6 +154,7 @@ mod tests {
         fs::write(&path, r#"{"projects": []}"#).unwrap();
         let settings = load(&path).settings;
         assert!(settings.notify_on_failure && settings.notify_on_finish);
+        assert!(!settings.mcp);
         assert_eq!((settings.terminal_font_size, settings.theme, settings.shortcut), (12, None, None));
     }
 

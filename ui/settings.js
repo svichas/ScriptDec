@@ -1,6 +1,6 @@
 import {
   call, groupScripts, h, icon, iconButton, invoke, listen, MAC, missingLabel, runScript, saveProject, scriptLabel,
-  scriptsOf, shortPackage, togglePin,
+  scriptsOf, shortPackage, toast, togglePin,
 } from './shared.js';
 import { checkForUpdates, updateBanner } from './update.js';
 
@@ -21,6 +21,7 @@ let recording = false; // the shortcut button is waiting for keys
 let launchAtLogin = false;
 let checking = false; // Check for Updates is waiting on GitHub
 let upToDate = false; // and found nothing newer
+const mcpCommand = await invoke('mcp_command'); // null on Windows, where agents can't connect yet
 
 const sidebar = h('nav', { class: 'sidebar', 'aria-label': 'Sections', 'data-tauri-drag-region': 'deep' });
 const head = h('header', { class: 'page-head', 'data-tauri-drag-region': 'deep' });
@@ -152,6 +153,18 @@ function segmented(label, options, value, onPick) {
     }, text)));
 }
 
+function agentsGroup() {
+  const copy = h('button', {
+    class: 'btn',
+    onClick: () => navigator.clipboard.writeText(mcpCommand).then(() => { copy.textContent = 'Copied'; }, toast),
+  }, 'Copy');
+  return group('AI agents',
+    switchSetting('Let AI agents read and restart scripts (MCP)',
+      'They can read output and start, restart or stop scripts, but never type into a terminal.',
+      settings.mcp, (mcp) => saveSettings({ mcp })),
+    setting('Add to Claude Code', h('span', { class: 'command mono' }, mcpCommand), copy));
+}
+
 function renderGeneral() {
   const fontSize = h('select', {
     'aria-label': 'Terminal font size',
@@ -176,6 +189,7 @@ function renderGeneral() {
     group('Appearance',
       setting('Theme', null, segmented('Theme', themes, settings.theme ?? null, (theme) => saveSettings({ theme }))),
       setting('Terminal font size', null, fontSize)),
+    mcpCommand ? agentsGroup() : '', // not null, which replaceChildren would print
     group('About',
       setting(`ScriptDec ${version}`,
         upToDate ? 'You have the latest version.' : 'Free and open source under the MIT License.',

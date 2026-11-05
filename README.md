@@ -25,6 +25,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Reopen after a restart.** Turn on Reopen running scripts, and the scripts still running when you quit, log out or update start again with ScriptDec. Ones you stopped stay stopped.
 - **Find in the output.** Cmd+F (Ctrl+F on Windows) searches a terminal's whole scrollback. Cmd+click (Ctrl+click) opens any web link a script prints.
 - **CPU and memory.** Hover a script's terminal tab to see what all its processes use together, like `1.2 GB · 42%`. Past 500 MB or 30% CPU, its row in the menu bar window shows it too. macOS only.
+- **AI agents (MCP).** Turn it on in Settings, and Claude Code or another agent can see your scripts, read and search their output, and start, restart or stop them. Agents never type into a terminal. Not on Windows yet.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
 - **Run with arguments.** Option-click a script's Run button (Alt-click on Windows), or press Shift+Enter on a search result, then type `--watch` or `--port 3001`. ScriptDec adds the `--` npm needs, runs it in its own terminal and remembers the arguments for next time. Save as custom script keeps the whole command.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
@@ -48,7 +49,7 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 </picture>
 
 - **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands, groups and `package.json` scripts.
-- **General.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDec from any app, crash and long-task notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
+- **General.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDec from any app, crash and long-task notifications on or off, a light, dark or system theme, the terminal font size, AI agent access (MCP), and Check for Updates.
 
 ## Install
 
@@ -96,6 +97,7 @@ ScriptDec is a [Tauri 2](https://tauri.app) app: Rust for the processes, plain H
 - `src-tauri/icons/icon.svg` and `tray.svg` are the icon sources. `pnpm tauri icon` turns them into the PNG, ICNS and ICO files beside them.
 - Scripts run through your login shell, so they get the same `PATH` as your terminal. The project's Node version is set after your rc files, so it wins over your version manager's default.
 - `src-tauri/src/update.rs` updates the app from the latest GitHub release's `latest.json`, through the [Tauri updater](https://tauri.app/plugin/updater/). It only installs packages signed with the key whose public half is in `tauri.conf.json`.
+- `src-tauri/src/mcp.rs` is the MCP server for AI agents. `ScriptDec --mcp`, which an agent launches, pipes its stdio to a Unix socket the app opens in its config folder while the switch is on. Only your user can open the socket, and no network port is opened.
 - Projects and settings are stored in `config.json` in the app config folder (`~/Library/Application Support/com.scriptdec.desktop/` on macOS).
 
 ## Contributing

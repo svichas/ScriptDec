@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+#[cfg(unix)]
+mod mcp;
 mod node;
 mod project;
 mod sessions;
@@ -171,6 +173,11 @@ async fn update_settings(app: AppHandle, settings: Settings) -> Result<(), Strin
             return Err(error);
         }
     }
+    // Only on a change, so a socket that can't open doesn't block every other setting.
+    #[cfg(unix)]
+    if settings.mcp != old.mcp {
+        mcp::enable(&app, settings.mcp)?;
+    }
     app.set_theme(settings.theme);
     state.edit(|config| {
         config.settings = settings.clone();
@@ -184,6 +191,13 @@ fn set_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
     shortcuts.unregister_all().map_err(|e| e.to_string())?;
     let Some(shortcut) = shortcut else { return Ok(()) };
     shortcuts.register(shortcut).map_err(|e| format!("Can't use {shortcut} as a shortcut: {e}"))
+}
+
+/// The command that adds ScriptDec to Claude Code. None on Windows, where agents can't connect yet.
+#[tauri::command]
+fn mcp_command() -> Option<String> {
+    let exe = std::env::current_exe().ok().filter(|_| cfg!(unix))?;
+    Some(format!("claude mcp add --scope user scriptdec -- {} --mcp", project::sh_quote(&exe.to_string_lossy())))
 }
 
 /// `key` picks up the script's settings; the toolkit and Node installs have none.
@@ -511,6 +525,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn main() {
+    let context = tauri::generate_context!();
+    // An agent launched `ScriptDec --mcp`: be a pipe to the running app, not a second app.
+    #[cfg(unix)]
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "--mcp") {
+        std::process::exit(mcp::bridge(&context.config().identifier));
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
@@ -551,6 +571,10 @@ fn main() {
             build_tray(app.handle())?;
             app.set_theme(settings.theme);
             if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
+                eprintln!("{error}");
+            }
+            #[cfg(unix)]
+            if let Err(error) = mcp::enable(app.handle(), settings.mcp) {
                 eprintln!("{error}");
             }
             if settings.reopen_scripts {
@@ -596,6 +620,7 @@ fn main() {
             set_login_item,
             settings,
             update_settings,
+            mcp_command,
             run,
             list_sessions,
             session_usage,
@@ -621,10 +646,13 @@ fn main() {
             hide_popover,
             quit,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to start ScriptDec")
         .run(|app, event| {
             if let RunEvent::Exit = event {
+                // First, so an agent can't start a script that the shutdown would miss.
+                #[cfg(unix)]
+                let _ = mcp::enable(app, false);
                 stop_scripts_for_exit(app);
             }
         });

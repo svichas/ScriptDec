@@ -280,6 +280,7 @@ body.popover { background: transparent; overflow: hidden; }
 .setting { display: flex; align-items: center; gap: 16px; min-height: 50px; padding: 9px 14px; }
 .setting + .setting { border-top: 1px solid var(--line); }
 .setting .sub { margin-top: 1px; font-size: 12px; white-space: normal; }
+.setting .command { overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 input.switch {
   -webkit-appearance: none;
   appearance: none;
