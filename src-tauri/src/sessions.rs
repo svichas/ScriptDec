@@ -205,7 +205,7 @@ impl Sessions {
             }
             let Some((wait, spec)) = restart else { return };
             thread::sleep(BACKOFF_STEP * wait);
-            // Stop, Dismiss and Quit take the restart back; a start by hand meanwhile made a newer run.
+            // Stop, Ctrl-C, Dismiss and Quit take the restart back; a start by hand meanwhile made a newer run.
             // shortcut: one landing between this check and start() is missed; check inside start() if that ever bites.
             let inner = this.inner.lock().unwrap();
             let due = inner.sessions.get(&id).is_some_and(|s| s.run == run && s.restart_in.is_some());
@@ -352,12 +352,19 @@ impl Sessions {
 
     pub fn send_input(&self, id: u32, data: &[u8]) {
         let mut inner = self.inner.lock().unwrap();
+        let mut cancelled = false;
         if let Some(s) = inner.sessions.get_mut(&id) {
             s.interrupted |= data.contains(&3);
+            // Ctrl-C while a crashed script waits to restart keeps it down, like Stop.
+            cancelled = data.contains(&3) && s.restart_in.take().is_some();
             if let Some(pty) = s.pty.as_mut() {
                 let _ = pty.writer.write_all(data);
                 let _ = pty.writer.flush();
             }
+        }
+        drop(inner);
+        if cancelled {
+            (self.on_change)();
         }
     }
 
@@ -696,8 +703,9 @@ mod tests {
     }
 
     #[test]
-    fn stop_dismiss_or_quit_during_the_wait_cancels_the_restart() {
-        let cancels: [fn(&Arc<Sessions>, u32); 3] = [|s, id| s.stop(id), |s, id| s.clear(id), |s, _| s.shutdown()];
+    fn stop_ctrl_c_dismiss_or_quit_during_the_wait_cancels_the_restart() {
+        let cancels: [fn(&Arc<Sessions>, u32); 4] =
+            [|s, id| s.stop(id), |s, id| s.send_input(id, b"\x03"), |s, id| s.clear(id), |s, _| s.shutdown()];
         let all: Vec<_> = cancels
             .into_iter()
             .map(|cancel| {
