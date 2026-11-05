@@ -261,6 +261,13 @@ pub fn move_pin(pinned: &mut Vec<String>, old: &str, new: Option<String>) {
     }
 }
 
+/// Groups hold script keys too, so they follow a rename and lose a delete the same way.
+pub fn move_in_groups(project: &mut Project, old: &str, new: Option<String>) {
+    for group in &mut project.groups {
+        move_pin(&mut group.scripts, old, new.clone());
+    }
+}
+
 pub fn scan(project: &Project) -> Scan {
     let root = Path::new(&project.path);
     let manifest = match read_manifest(root) {
@@ -459,6 +466,19 @@ mod tests {
         assert_eq!(pinned, [":c"]);
         move_pin(&mut pinned, ":missing", None);
         assert_eq!(pinned, [":c"]);
+    }
+
+    #[test]
+    fn groups_follow_a_rename_and_lose_a_delete() {
+        let group = |keys: &[&str]| config::Group {
+            scripts: keys.iter().map(|k| k.to_string()).collect(),
+            ..Default::default()
+        };
+        let mut project = Project { groups: vec![group(&[":a", ":b"]), group(&[":b", "web:b"])], ..Default::default() };
+        move_in_groups(&mut project, ":b", Some(":c".to_string()));
+        move_in_groups(&mut project, ":a", None);
+        let keys: Vec<_> = project.groups.into_iter().map(|g| g.scripts).collect();
+        assert_eq!(keys, [vec![":c"], vec![":c", "web:b"]]);
     }
 
     #[cfg(unix)]

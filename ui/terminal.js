@@ -89,7 +89,7 @@ function render() {
       class: 'chip', title: `Open ${session.url}`, onClick: () => call('open_url', { url: session.url }),
     }, urlLabel(session.url)),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
-    isLive(session)
+    isLive(session) || session.restartIn // stopping a pending restart cancels it
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
       : iconButton('close', 'Dismiss', () => call('clear_session', { id: session.id })),
   ].filter(Boolean) : []));

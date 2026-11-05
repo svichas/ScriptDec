@@ -61,6 +61,7 @@ export const call = (command, args) => invoke(command, args).catch((error) => { 
 export const isLive = (session) => session.status === 'running' || session.status === 'stopping';
 
 export function statusText(session) {
+  if (session.restartIn) return `crashed, restarting in ${session.restartIn}s`;
   if (session.status === 'exited') return session.code === 0 ? 'finished' : `failed (exit ${session.code})`;
   return session.status;
 }
@@ -80,9 +81,19 @@ export function scriptsOf(project) {
 
 export const shortPackage = (name) => name.split('/').pop();
 export const scriptLabel = (s) => (s.package ? `${shortPackage(s.package)} ${s.name}` : s.name);
+export const missingLabel = (key) => `${key.replace(/^:/, '')} (missing)`;
+
+/** A group's scripts in menu order, and its keys that match none: deleted or renamed outside ScriptDec. */
+export function groupScripts(project, group) {
+  const all = scriptsOf(project);
+  return {
+    scripts: all.filter((s) => group.scripts.includes(s.key)),
+    missing: group.scripts.filter((key) => !all.some((s) => s.key === key)),
+  };
+}
 
 export function runScript(project, script) {
-  return call('run', { projectId: project.id, label: scriptLabel(script), command: script.command });
+  return call('run', { projectId: project.id, label: scriptLabel(script), command: script.command, key: script.key });
 }
 
 export function saveProject({ scan, ...project }) {
