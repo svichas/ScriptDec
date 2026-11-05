@@ -81,8 +81,9 @@ function render() {
   }, h('span', { class: `dot ${dotClass(session)}` }), session.label)));
 
   const session = sessions.find((s) => s.id === active);
+  const busy = session?.busyPort && portText(session, owners.get(session.id));
   actions.replaceChildren(...(session ? [
-    session.busyPort && h('span', { class: 'warn' }, portText(session, owners.get(session.id))),
+    busy && h('span', { class: 'warn', title: busy }, busy),
     freePortButton(session, owners.get(session.id), confirming, arm),
     isLive(session) && session.url && h('button', {
       class: 'chip', title: `Open ${session.url}`, onClick: () => call('open_url', { url: session.url }),
