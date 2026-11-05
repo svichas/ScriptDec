@@ -1,5 +1,5 @@
 //! Lets AI agents read and restart scripts over MCP, while the switch in Settings > General is on.
-//! An agent launches `ScriptDec --mcp`, which pipes its stdio to a Unix socket the running app opens
+//! An agent launches `ScriptDeck --mcp`, which pipes its stdio to a Unix socket the running app opens
 //! in its config folder. The socket's 0600 permissions are the access control: no port is opened.
 
 use crate::{
@@ -50,11 +50,11 @@ pub fn enable(app: &AppHandle, on: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// `ScriptDec --mcp`, which an agent launches: a pipe to the running app. Returns the exit code.
+/// `ScriptDeck --mcp`, which an agent launches: a pipe to the running app. Returns the exit code.
 pub fn bridge(identifier: &str) -> i32 {
     let Some(socket) = socket_path(identifier).and_then(|path| UnixStream::connect(path).ok()) else {
         eprintln!(
-            "ScriptDec isn't letting AI agents in. Open ScriptDec and turn on \
+            "ScriptDeck isn't letting AI agents in. Open ScriptDeck and turn on \
              \"Let AI agents read and restart scripts (MCP)\" in Settings > General."
         );
         return 1;
@@ -149,7 +149,7 @@ fn handle(line: &str, tools: &Tools) -> Option<Value> {
             Ok(json!({
                 "protocolVersion": VERSIONS.iter().find(|v| **v == asked).unwrap_or(&VERSIONS[0]),
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "scriptdec", "version": env!("CARGO_PKG_VERSION") }
+                "serverInfo": { "name": "scriptdeck", "version": env!("CARGO_PKG_VERSION") }
             }))
         }
         "ping" => Ok(json!({})),
@@ -188,7 +188,7 @@ fn tool_list() -> Vec<Value> {
     vec![
         tool(
             "list_scripts",
-            "Lists ScriptDec's projects with their scripts, and every session (a script run) with its status, \
+            "Lists ScriptDeck's projects with their scripts, and every session (a script run) with its status, \
              dev server URL and exit code.",
             json!({}),
             &[],
@@ -210,7 +210,7 @@ fn tool_list() -> Vec<Value> {
         ),
         tool(
             "start_script",
-            "Runs a project's script in the background, as ScriptDec's Run button does, and returns its session. \
+            "Runs a project's script in the background, as ScriptDeck's Run button does, and returns its session. \
              A script that is already running keeps its session.",
             json!({
                 "project": { "type": "string", "description": "A project id from list_scripts" },
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn the_bridge_carries_an_agent_to_the_app_and_back_until_the_switch_goes_off() {
-        let dir = std::env::temp_dir().join(format!("scriptdec-mcp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("scriptdeck-mcp-{}", std::process::id()));
         let path = dir.join("mcp.sock");
         let listener = listen(&path, Arc::new(echo)).unwrap();
         assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);

@@ -1,10 +1,10 @@
 {
-  "name": "scriptdec",
+  "name": "scriptdeck",
   "private": true,
   "version": "0.3.0",
   "description": "A menu bar app for running your package.json scripts in the background",
   "license": "MIT",
-  "repository": "github:svichas/ScriptDec",
+  "repository": "github:svichas/ScriptDeck",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

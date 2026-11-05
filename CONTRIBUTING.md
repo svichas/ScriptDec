@@ -4,7 +4,7 @@ Thanks for helping. Issues and pull requests are both welcome.
 
 ## Reporting a bug
 
-Open an issue with the bug report form; it asks for your OS and ScriptDec versions. When a script misbehaves, its package manager and command help a lot.
+Open an issue with the bug report form; it asks for your OS and ScriptDeck versions. When a script misbehaves, its package manager and command help a lot.
 
 Report security problems privately instead, as described in [SECURITY.md](SECURITY.md).
 

@@ -1,5 +1,5 @@
 name: Feature request
-description: An idea for ScriptDec.
+description: An idea for ScriptDeck.
 labels: [enhancement]
 body:
   - type: textarea

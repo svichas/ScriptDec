@@ -100,7 +100,7 @@ export const shortPackage = (name) => name.split('/').pop();
 export const scriptLabel = (s) => (s.package ? `${shortPackage(s.package)} ${s.name}` : s.name);
 export const missingLabel = (key) => `${key.replace(/^:/, '')} (missing)`;
 
-/** A group's scripts in menu order, and its keys that match none: deleted or renamed outside ScriptDec. */
+/** A group's scripts in menu order, and its keys that match none: deleted or renamed outside ScriptDeck. */
 export function groupScripts(project, group) {
   const all = scriptsOf(project);
   return {

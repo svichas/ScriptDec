@@ -133,7 +133,7 @@ struct Inner {
     sink: Option<(u32, Sink)>,
     /// Set by `shutdown()`, so a restart still reaping can't start a run that outlives the app.
     /// shortcut: never cleared, so if Windows' installer fails to launch after `on_before_exit`, no script starts
-    /// until ScriptDec is reopened; clear it on that error if it comes up.
+    /// until ScriptDeck is reopened; clear it on that error if it comes up.
     quitting: bool,
 }
 
@@ -178,7 +178,7 @@ impl Sessions {
         }
         let mut inner = self.inner.lock().unwrap();
         if inner.quitting {
-            return Err("ScriptDec is quitting".into());
+            return Err("ScriptDeck is quitting".into());
         }
         let existing = inner
             .sessions
@@ -982,7 +982,7 @@ mod tests {
 
     #[test]
     fn project_node_beats_whatever_the_rc_files_put_on_path() {
-        let dir = std::env::temp_dir().join(format!("scriptdec-bin-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("scriptdeck-bin-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let bin = dir.join("node");
         std::fs::write(&bin, "#!/bin/sh\necho fake-node-v1\n").unwrap();
@@ -1106,7 +1106,7 @@ mod tests {
     /// Listens on a port the OS picks, since other tests run at the same time, and gives up after a minute.
     const LISTENER: &str = r#"node -e 'require("net").createServer().listen(0, "127.0.0.1", function () { console.log("port=" + this.address().port) }); setTimeout(process.exit, 60000)'"#;
 
-    /// Runs a listener outside ScriptDec, and returns it with its port.
+    /// Runs a listener outside ScriptDeck, and returns it with its port.
     fn listen_outside(listener: &str) -> (std::process::Child, u16) {
         let shell = Command::new("sh").args(["-c", &format!("exec {listener}")]).stdout(Stdio::piped()).spawn();
         let mut child = shell.unwrap();
@@ -1116,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn frees_a_port_held_outside_scriptdec() {
+    fn frees_a_port_held_outside_scriptdeck() {
         let (mut child, port) = listen_outside(LISTENER);
         let sessions = new_sessions();
         let owner = sessions.port_owner(port).unwrap();

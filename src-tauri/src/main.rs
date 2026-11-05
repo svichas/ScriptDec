@@ -31,7 +31,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
-const HOMEPAGE: &str = "https://github.com/svichas/ScriptDec";
+const HOMEPAGE: &str = "https://github.com/svichas/ScriptDeck";
 
 struct App {
     config: Mutex<Config>,
@@ -193,11 +193,11 @@ fn set_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
     shortcuts.register(shortcut).map_err(|e| format!("Can't use {shortcut} as a shortcut: {e}"))
 }
 
-/// The command that adds ScriptDec to Claude Code. None on Windows, where agents can't connect yet.
+/// The command that adds ScriptDeck to Claude Code. None on Windows, where agents can't connect yet.
 #[tauri::command]
 fn mcp_command() -> Option<String> {
     let exe = std::env::current_exe().ok().filter(|_| cfg!(unix))?;
-    Some(format!("claude mcp add --scope user scriptdec -- {} --mcp", project::sh_quote(&exe.to_string_lossy())))
+    Some(format!("claude mcp add --scope user scriptdeck -- {} --mcp", project::sh_quote(&exe.to_string_lossy())))
 }
 
 /// `key` picks up the script's settings; the toolkit and Node installs have none.
@@ -309,12 +309,12 @@ fn show_window(app: &AppHandle, label: &str, url: String, title: &str, size: (f6
 /// Async: creating a window from a sync command deadlocks on Windows.
 #[tauri::command]
 async fn open_settings(app: AppHandle) -> Result<(), String> {
-    show_window(&app, "settings", "settings.html".into(), "ScriptDec", (860.0, 620.0))
+    show_window(&app, "settings", "settings.html".into(), "ScriptDeck", (860.0, 620.0))
 }
 
 #[tauri::command]
 async fn open_terminal(app: AppHandle, id: u32) -> Result<(), String> {
-    show_window(&app, "terminal", format!("terminal.html?session={id}"), "ScriptDec Terminal", (900.0, 580.0))?;
+    show_window(&app, "terminal", format!("terminal.html?session={id}"), "ScriptDeck Terminal", (900.0, 580.0))?;
     app.emit_to("terminal", "select-session", id).map_err(|e| e.to_string())
 }
 
@@ -441,7 +441,7 @@ fn sessions_changed(app: &AppHandle) {
     let running = list.iter().filter(|s| matches!(s.status, Status::Running | Status::Stopping)).count();
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_title((running > 0).then(|| running.to_string()));
-        let _ = tray.set_tooltip(Some(format!("ScriptDec: {running} running")));
+        let _ = tray.set_tooltip(Some(format!("ScriptDeck: {running} running")));
     }
 }
 
@@ -494,15 +494,15 @@ const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
 const TRAY_ICON: &[u8] = include_bytes!("../icons/32x32.png");
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open ScriptDec", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open ScriptDeck", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop_all", "Stop All Scripts", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit ScriptDec", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit ScriptDeck", true, None::<&str>)?;
     let line = PredefinedMenuItem::separator(app)?;
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(TRAY_ICON)?)
         .icon_as_template(true)
-        .tooltip("ScriptDec")
+        .tooltip("ScriptDeck")
         .menu(&Menu::with_items(app, &[&open, &settings, &stop, &line, &quit])?)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -526,7 +526,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 fn main() {
     let context = tauri::generate_context!();
-    // An agent launched `ScriptDec --mcp`: be a pipe to the running app, not a second app.
+    // An agent launched `ScriptDeck --mcp`: be a pipe to the running app, not a second app.
     #[cfg(unix)]
     if std::env::args_os().nth(1).is_some_and(|arg| arg == "--mcp") {
         std::process::exit(mcp::bridge(&context.config().identifier));
@@ -576,6 +576,14 @@ fn main() {
             #[cfg(unix)]
             if let Err(error) = mcp::enable(app.handle(), settings.mcp) {
                 eprintln!("{error}");
+            }
+            // The app was called ScriptDec, and a login item goes by the app's name: move an old one over.
+            // Release builds only, so a dev build can't take the installed app's login item.
+            #[cfg(target_os = "macos")]
+            if let Some(old) = std::env::home_dir().map(|home| home.join("Library/LaunchAgents/ScriptDec.plist")) {
+                if !cfg!(debug_assertions) && old.exists() && app.autolaunch().enable().is_ok() {
+                    let _ = std::fs::remove_file(old);
+                }
             }
             if settings.reopen_scripts {
                 for script in reopen {
@@ -647,7 +655,7 @@ fn main() {
             quit,
         ])
         .build(context)
-        .expect("failed to start ScriptDec")
+        .expect("failed to start ScriptDeck")
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 // First, so an agent can't start a script that the shutdown would miss.
