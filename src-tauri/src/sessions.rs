@@ -45,6 +45,15 @@ pub struct SessionView {
     pub status: Status,
     pub code: Option<i32>,
     pub url: Option<String>,
+    pub busy_port: Option<u16>,
+}
+
+/// What listens on a port: a stray process, or one of our scripts.
+#[derive(Serialize)]
+pub struct PortOwner {
+    pub pid: u32,
+    pub command: String,
+    pub session: Option<SessionView>,
 }
 
 struct Pty {
@@ -57,6 +66,8 @@ struct Session {
     status: Status,
     code: Option<i32>,
     url: Option<String>,
+    /// The port the script said was taken.
+    busy_port: Option<u16>,
     pid: u32,
     /// Bumped on restart so the old process's threads can't touch the new run.
     run: u32,
@@ -77,6 +88,7 @@ impl Session {
             status: self.status,
             code: self.code,
             url: self.url.clone(),
+            busy_port: self.busy_port,
         }
     }
 }
@@ -149,6 +161,7 @@ impl Sessions {
             status: Status::Running,
             code: None,
             url: None,
+            busy_port: None,
             pid,
             run,
             scrollback: vec![],
@@ -206,8 +219,13 @@ impl Sessions {
                 s.url = find_url(chunk);
                 s.url.is_some()
             };
+            // Unix only: naming the port's owner needs lsof.
+            let found_port = cfg!(unix) && s.busy_port.is_none() && {
+                s.busy_port = find_busy_port(chunk);
+                s.busy_port.is_some()
+            };
             drop(inner);
-            if found_url {
+            if found_url || found_port {
                 (self.on_change)();
             }
         }
@@ -287,6 +305,42 @@ impl Sessions {
             }
             None => self.start(spec).map(|_| ()),
         }
+    }
+
+    /// What listens on `port`, and the live script whose process tree it's in, if any.
+    pub fn port_owner(&self, port: u16) -> Option<PortOwner> {
+        let (pid, command) = listener(port)?;
+        let table = process_table();
+        let inner = self.inner.lock().unwrap();
+        let session = inner
+            .sessions
+            .iter()
+            .filter(|(_, s)| matches!(s.status, Status::Running | Status::Stopping))
+            .find(|(_, s)| descendants(&table, s.pid).contains(&pid))
+            .map(|(id, s)| s.view(*id));
+        Some(PortOwner { pid, command, session })
+    }
+
+    /// Stops what listens on `port`, if that's still `pid`: one of our scripts the normal way, anything
+    /// else with SIGTERM to its tree, then SIGKILL after 2 s. Returns once the port is free.
+    pub fn free_port(&self, port: u16, pid: u32) -> Result<(), String> {
+        let Some(owner) = self.port_owner(port) else { return Ok(()) };
+        if owner.pid != pid {
+            (self.on_change)(); // the windows name the old owner, so have them look again
+            return Err(format!("Port {port} is now in use by {} (pid {})", owner.command, owner.pid));
+        }
+        if let Some(session) = owner.session {
+            if let Some((root, run)) = self.interrupt(session.id) {
+                self.reap(session.id, run, root);
+            }
+            return Ok(());
+        }
+        kill_tree(pid, Signal::Term);
+        if !wait_free(port, pid, Duration::from_secs(2)) {
+            kill_tree(pid, Signal::Kill);
+            wait_free(port, pid, Duration::from_secs(1));
+        }
+        Ok(())
     }
 
     /// Forgets a finished session.
@@ -403,21 +457,25 @@ fn descendants(table: &[(u32, u32)], root: u32) -> Vec<u32> {
     tree
 }
 
-#[cfg(unix)]
-fn kill_tree(root: u32, signal: Signal) {
-    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output() else { return };
-    let table: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
+/// Every process as (pid, ppid).
+fn process_table() -> Vec<(u32, u32)> {
+    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output() else { return vec![] };
+    String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|line| {
             let mut parts = line.split_whitespace().map(|p| p.parse().ok());
             Some((parts.next()??, parts.next()??))
         })
-        .collect();
+        .collect()
+}
+
+#[cfg(unix)]
+fn kill_tree(root: u32, signal: Signal) {
     let signal = match signal {
         Signal::Term => libc::SIGTERM,
         Signal::Kill => libc::SIGKILL,
     };
-    for pid in descendants(&table, root) {
+    for pid in descendants(&process_table(), root) {
         unsafe { libc::kill(pid as i32, signal) };
     }
 }
@@ -430,6 +488,33 @@ fn kill_tree(root: u32, _signal: Signal) {
         .args(["/T", "/F", "/PID", &root.to_string()])
         .creation_flags(CREATE_NO_WINDOW)
         .status();
+}
+
+/// The process listening on a TCP port, as (pid, command). Unix only: lsof.
+fn listener(port: u16) -> Option<(u32, String)> {
+    let filter = format!("-iTCP:{port}");
+    let out = Command::new("lsof").args(["-nP", &filter, "-sTCP:LISTEN", "-Fpc"]).output().ok()?;
+    parse_lsof(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `lsof -F` prints a field per line: `p` and the pid, then `c` and its command. The first process wins.
+fn parse_lsof(out: &str) -> Option<(u32, String)> {
+    let mut lines = out.lines();
+    let pid = lines.next()?.strip_prefix('p')?.parse().ok()?;
+    let command = lines.next()?.strip_prefix('c')?;
+    Some((pid, command.to_string()))
+}
+
+/// Waits for `pid` to let go of `port`.
+fn wait_free(port: u16, pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while listener(port).is_some_and(|(holder, _)| holder == pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    true
 }
 
 fn strip_ansi(bytes: &[u8]) -> Vec<u8> {
@@ -474,9 +559,27 @@ fn find_url(chunk: &[u8]) -> Option<String> {
         .map(|(_, url)| url)
 }
 
+/// The port a script couldn't listen on. Servers that move to the next port say "is in use"
+/// (Vite, Next.js), so only "already" counts.
+/// shortcut: scans one read at a time, like find_url.
+fn find_busy_port(chunk: &[u8]) -> Option<u16> {
+    let text = String::from_utf8_lossy(&strip_ansi(chunk)).to_lowercase();
+    let mut lines = text.lines().filter(|line| line.contains("already in use") || line.contains("already running on port"));
+    lines.find_map(|line| {
+        // `port 3000` (Vite, Create React App, Puma), else the end of Node's `address already in use :::3000`
+        let rest = match line.find("port ") {
+            Some(at) => &line[at + 5..],
+            None => line.split("in use ").nth(1)?.split_whitespace().next()?.rsplit(':').next()?,
+        };
+        rest.chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -686,8 +789,65 @@ mod tests {
     }
 
     #[test]
+    fn finds_the_port_a_script_could_not_take() {
+        let port = |s: &str| find_busy_port(s.as_bytes());
+        assert_eq!(port("Error: listen EADDRINUSE: address already in use :::3000"), Some(3000));
+        assert_eq!(port("Port 5173 is already in use"), Some(5173));
+        assert_eq!(port("\x1b[33mSomething is already running on port 3000.\x1b[39m"), Some(3000));
+        assert_eq!(port("Address already in use - bind(2) for \"127.0.0.1\" port 3000"), Some(3000));
+        // These move to the next free port on their own.
+        assert_eq!(port("Port 5173 is in use, trying another one..."), None);
+        assert_eq!(port("Port 3000 is in use by process 123, using available port 3001 instead."), None);
+    }
+
+    #[test]
+    fn notes_the_port_a_script_could_not_take() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("echo 'Port 5173 is already in use'; exit 1")).unwrap();
+        wait_for("busy port", || view(&sessions, id).busy_port == Some(5173));
+    }
+
+    #[test]
     fn walks_the_whole_process_tree() {
         let table = [(2, 1), (3, 2), (4, 3), (9, 8)];
         assert_eq!(descendants(&table, 1), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn reads_the_listener_from_lsof() {
+        assert_eq!(parse_lsof("p39855\ncnode\nf12\n"), Some((39855, "node".into())));
+        assert_eq!(parse_lsof("p100\ncruby\nf9\np101\ncruby\nf9\n"), Some((100, "ruby".into())));
+        assert_eq!(parse_lsof(""), None);
+    }
+
+    /// Listens on a port the OS picks, since other tests run at the same time, and gives up after a minute.
+    const LISTENER: &str = r#"node -e 'require("net").createServer().listen(0, "127.0.0.1", function () { console.log("port=" + this.address().port) }); setTimeout(process.exit, 60000)'"#;
+
+    #[test]
+    fn frees_a_port_held_outside_scriptdec() {
+        let shell = Command::new("sh").args(["-c", &format!("exec {LISTENER}")]).stdout(Stdio::piped()).spawn();
+        let mut child = shell.unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let port = line.trim().trim_start_matches("port=").parse().unwrap();
+        let sessions = new_sessions();
+        let owner = sessions.port_owner(port).unwrap();
+        assert_eq!((owner.pid, owner.command.as_str()), (child.id(), "node"));
+        assert!(owner.session.is_none());
+        assert!(sessions.free_port(port, owner.pid + 1).is_err(), "only the pid the user saw");
+        sessions.free_port(port, owner.pid).unwrap();
+        assert!(sessions.port_owner(port).is_none());
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_port_held_by_a_script_is_freed_with_a_normal_stop() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec(LISTENER)).unwrap();
+        let port = printed_pid(&sessions, id, "port=") as u16;
+        let owner = sessions.port_owner(port).unwrap();
+        assert_eq!(owner.session.map(|s| s.id), Some(id));
+        sessions.free_port(port, owner.pid).unwrap();
+        assert_eq!(view(&sessions, id).status, Status::Stopped);
     }
 }

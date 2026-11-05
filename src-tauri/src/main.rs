@@ -218,6 +218,18 @@ fn restart(state: State<App>, id: u32) -> Result<(), String> {
     state.sessions.restart(id)
 }
 
+/// Async: lsof and ps take a moment.
+#[tauri::command]
+async fn port_owner(app: AppHandle, port: u16) -> Option<sessions::PortOwner> {
+    app.state::<App>().sessions.port_owner(port)
+}
+
+/// Async: waits, a few seconds at most, for the port to be let go.
+#[tauri::command]
+async fn free_port(app: AppHandle, port: u16, pid: u32) -> Result<(), String> {
+    app.state::<App>().sessions.free_port(port, pid)
+}
+
 #[tauri::command]
 fn clear_session(state: State<App>, id: u32) {
     state.sessions.clear(id);
@@ -499,6 +511,8 @@ fn main() {
             stop,
             stop_all,
             restart,
+            port_owner,
+            free_port,
             clear_session,
             attach,
             send_input,
