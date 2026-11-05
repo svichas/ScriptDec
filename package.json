@@ -1,7 +1,7 @@
 {
   "name": "scriptdec",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A menu bar app for running your package.json scripts in the background",
   "license": "MIT",
   "repository": "github:svichas/ScriptDec",
