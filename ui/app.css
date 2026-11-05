@@ -108,6 +108,8 @@ button.btn.danger { color: var(--bad); }
 .dot.on { background: var(--ok); }
 .dot.busy { background: var(--warn); }
 .dot.bad { background: var(--bad); }
+/* A group with only some of its scripts running. */
+.dot.some { background: linear-gradient(90deg, var(--ok) 50%, var(--idle) 50%); }
 /* Transform and opacity only, so the pulse costs no repaints. */
 .dot.on::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-out infinite; }
 @keyframes pulse { from { transform: scale(1); opacity: 0.55; } to { transform: scale(2.8); opacity: 0; } }
@@ -224,6 +226,10 @@ body.popover { background: transparent; overflow: hidden; }
 .project-head .glyph { color: var(--fg-2); transition: transform 0.12s; }
 .project-head.open .glyph { transform: rotate(90deg); }
 .hint { padding: 4px 12px 8px; color: var(--fg-2); font-size: 11px; }
+.hint.port { padding: 0 8px 8px 28px; } /* under its row's title */
+.args { display: flex; align-items: center; gap: 8px; padding: 2px 8px 6px 28px; }
+.args input { flex: 1; min-width: 0; font-size: 12px; }
+.args .link { font-size: 11px; white-space: nowrap; }
 
 /* Settings */
 .settings { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
@@ -254,12 +260,17 @@ body.popover { background: transparent; overflow: hidden; }
 .inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .note { margin: 6px 0 0; color: var(--fg-2); font-size: 12px; }
 .custom-row, .add-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
-.custom-row .actions { display: flex; gap: 4px; }
+.custom-row .actions { display: flex; align-items: center; gap: 4px; }
 .script-editor { margin: 4px 0; }
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .section-head h2 { margin: 0; }
 .page-body .filter { width: 100%; margin-bottom: 6px; }
 .package-title { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 2px; padding: 0 8px 0 12px; font-size: 12px; font-weight: 600; }
+.script-group { margin-bottom: 8px; padding: 8px 10px; }
+.script-group .inline input { flex: 1; }
+.ticks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 12px; max-height: 200px; overflow-y: auto; margin-top: 6px; }
+.ticks label { padding: 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ticks input { margin: 0 6px 0 0; padding: 0; vertical-align: -2px; accent-color: var(--accent); }
 
 /* Settings: General */
 .group { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
@@ -331,4 +342,12 @@ body.dropping::after {
 .tab { display: flex; align-items: center; gap: 6px; flex: none; max-width: 220px; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab:hover, .tab.active { background: var(--bg-3); }
 .tab.active { color: var(--fg); }
-#screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; }
+#actions .warn { max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* leaves the tabs room in a narrow window */
+#screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; position: relative; }
+/* Above xterm's own layers, the highest of which is its scrollbar at 11 */
+.find { position: absolute; top: 8px; right: 22px; z-index: 12; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); }
+.find[hidden] { display: none; }
+.find input { width: 180px; padding: 3px 8px; background: var(--bg); }
+.find .count { min-width: 76px; padding: 0 6px; color: var(--fg-2); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.find .up .glyph { transform: rotate(-90deg); }
+.find .down .glyph { transform: rotate(90deg); }

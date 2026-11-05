@@ -1,6 +1,6 @@
 import {
-  call, dotClass, h, icon, iconButton, invoke, isLive, listen, nodeLabel, runScript, scriptLabel,
-  scriptsOf, statusText, togglePin, urlLabel,
+  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel,
+  portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel, withArgs,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -11,6 +11,9 @@ let sessions = [];
 let query = '';
 let cursor = 0;
 let results = [];
+let owners = new Map(); // session id → what holds its busy port
+let confirming = null; // the Free port button waiting for its second click
+const arm = (key) => { confirming = key; render(); };
 
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
@@ -21,6 +24,19 @@ function toggleCollapsed(id) {
   try { localStorage.setItem('collapsed', JSON.stringify([...collapsed])); } catch { /* only a convenience */ }
   render();
 }
+
+// The arguments field under a script's row: Shift+Enter on a search result, or Option-click on Run.
+let argsFor = null; // [project, script]
+const argsKey = (project, script) => `${project.id}:${script.key}`; // script keys repeat across projects
+function loadLastArgs() {
+  try { return JSON.parse(localStorage.getItem('lastArgs')) ?? {}; } catch { return {}; }
+}
+const lastArgs = loadLastArgs();
+const argsInput = h('input', {
+  class: 'mono', placeholder: '--watch', 'aria-label': 'Arguments', spellcheck: 'false', onKeydown: onArgsKey,
+});
+const argsField = h('div', { class: 'args' }, argsInput,
+  h('button', { class: 'link', onClick: saveArgs }, 'Save as custom script'));
 
 const search = h('input', {
   type: 'search',
@@ -45,6 +61,40 @@ function act(project, script) {
   const session = sessionFor(project, script);
   if (session && isLive(session)) return openTerminal(session.id);
   return runScript(project, script);
+}
+
+function openArgs(project, script) {
+  argsFor = [project, script];
+  argsInput.value = lastArgs[argsKey(project, script)] ?? '';
+  render();
+  argsInput.focus();
+  argsInput.select();
+}
+
+function closeArgs() {
+  argsFor = null;
+  render();
+  search.focus();
+}
+
+function onArgsKey(event) {
+  if (event.key === 'Escape') return closeArgs();
+  if (event.key !== 'Enter') return;
+  const [project, script] = argsFor;
+  const args = argsInput.value.trim();
+  lastArgs[argsKey(project, script)] = args;
+  try { localStorage.setItem('lastArgs', JSON.stringify(lastArgs)); } catch { /* only a convenience */ }
+  closeArgs();
+  act(project, withArgs(project, script, args));
+}
+
+async function saveArgs() {
+  if (!argsInput.value.trim()) return argsInput.focus();
+  const [project, script] = argsFor;
+  const run = withArgs(project, script, argsInput.value);
+  project.custom.push({ id: crypto.randomUUID(), name: scriptLabel(run), command: run.command });
+  await saveProject(project);
+  closeArgs();
 }
 
 function urlChip(session) {
@@ -76,9 +126,15 @@ function sessionRow(session) {
       sub),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
-    live
+    live || session.restartIn // stopping a pending restart cancels it
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
       : iconButton('close', 'Dismiss', () => call('clear_session', { id: session.id })));
+}
+
+function portNotice(session) {
+  const owner = owners.get(session.id);
+  return session.busyPort && h('div', { class: 'hint inline port' },
+    h('span', { class: 'warn' }, portText(session, owner)), freePortButton(session, owner, confirming, arm));
 }
 
 function scriptRow(project, script, showProject, selected) {
@@ -86,7 +142,7 @@ function scriptRow(project, script, showProject, selected) {
   const live = session && isLive(session);
   const pinned = project.pinned.includes(script.key);
   const sub = showProject ? `${project.name} · ${script.command}` : script.command;
-  return h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => act(project, script) },
+  const row = h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => act(project, script) },
     h('span', { class: `dot ${session ? dotClass(session) : ''}` }),
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, scriptLabel(script)),
@@ -97,7 +153,41 @@ function scriptRow(project, script, showProject, selected) {
     }, pinned ? 'pinned' : ''),
     live
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
-      : iconButton('play', 'Run', () => runScript(project, script), 'go'));
+      : iconButton('play', 'Run', (event) => (event.altKey ? openArgs(project, script) : runScript(project, script)), 'go'));
+  return argsFor && argsKey(...argsFor) === argsKey(project, script) ? [row, argsField] : row;
+}
+
+/** The running sessions of a group's scripts, and the scripts that aren't running. */
+function groupState(project, group) {
+  const { scripts, missing } = groupScripts(project, group);
+  const live = [];
+  const idle = [];
+  for (const script of scripts) {
+    const session = sessionFor(project, script);
+    if (session && isLive(session)) live.push(session);
+    else idle.push(script);
+  }
+  return { scripts, missing, live, idle };
+}
+
+/** Starts what isn't running; when it all is, shows the first terminal, as act() does for one script. */
+function startGroup(project, group) {
+  const { live, idle } = groupState(project, group);
+  if (!idle.length && live.length) return openTerminal(live[0].id);
+  idle.forEach((script) => runScript(project, script));
+}
+
+function groupRow(project, group, showProject, selected) {
+  const { scripts, missing, live, idle } = groupState(project, group);
+  const names = [...scripts.map(scriptLabel), ...missing.map(missingLabel)].join(', ');
+  const sub = [showProject && project.name, `${live.length} of ${scripts.length} running`, names];
+  return h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => startGroup(project, group) },
+    h('span', { class: `dot ${!live.length ? '' : idle.length ? 'some' : 'on'}` }),
+    h('div', { class: 'meta' },
+      h('div', { class: 'title' }, group.name),
+      h('div', { class: 'sub', title: names }, sub.filter(Boolean).join(' · '))),
+    live.length > 0 && iconButton('stop', 'Stop group', () => live.forEach((s) => call('stop', { id: s.id })), 'danger'),
+    idle.length > 0 && iconButton('play', 'Run group', () => startGroup(project, group), 'go'));
 }
 
 function projectBlock(project) {
@@ -113,21 +203,23 @@ function projectBlock(project) {
       h('span', { class: 'name' }, project.name),
       h('span', { class: `info ${node.wanted && !node.resolved ? 'warn' : ''}` }, error ? '' : `${pm} · ${nodeLabel(node)}`)),
     open && error && h('div', { class: 'hint warn' }, error),
+    open && project.groups.map((group) => groupRow(project, group, false, false)),
     open && shown.map((script) => scriptRow(project, script, false, false)),
     open && hidden > 0 && h('div', { class: 'hint' }, `${hidden} more scripts, search to find them`),
   ];
 }
 
 function matches(project, script, terms) {
-  const text = `${project.name} ${script.package ?? ''} ${script.name} ${script.command}`.toLowerCase();
+  const text = `${project.name} ${script.package ?? ''} ${script.name} ${script.command ?? ''}`.toLowerCase();
   return terms.every((term) => text.includes(term));
 }
 
 function searchResults() {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const pinnedFirst = ([p, s]) => (s.custom || p.pinned.includes(s.key) ? 0 : 1);
+  // A group, told apart by its list of scripts, ranks with the pinned scripts and ahead of its project's.
+  const pinnedFirst = ([p, s]) => (s.scripts || s.custom || p.pinned.includes(s.key) ? 0 : 1);
   return projects
-    .flatMap((project) => scriptsOf(project).map((script) => [project, script]))
+    .flatMap((project) => [...project.groups, ...scriptsOf(project)].map((item) => [project, item]))
     .filter(([project, script]) => matches(project, script, terms))
     .sort((a, b) => pinnedFirst(a) - pinnedFirst(b))
     .slice(0, MAX_RESULTS);
@@ -136,6 +228,8 @@ function searchResults() {
 function render() {
   const scroll = list.scrollTop;
   tickers = [];
+  // Rebuilding the list detaches the arguments field, which drops its focus.
+  if (document.activeElement === argsInput) queueMicrotask(() => argsInput.focus());
   if (!projects.length) {
     list.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'No projects yet.'),
@@ -146,7 +240,8 @@ function render() {
     results = searchResults();
     cursor = Math.min(cursor, Math.max(results.length - 1, 0));
     list.replaceChildren(...(results.length
-      ? results.map(([project, script], i) => scriptRow(project, script, projects.length > 1, i === cursor))
+      ? results.flatMap(([project, item], i) => (item.scripts ? groupRow : scriptRow)(
+        project, item, projects.length > 1, i === cursor))
       : [h('div', { class: 'empty' }, 'No matching scripts.')]));
     return;
   }
@@ -155,7 +250,7 @@ function render() {
     sessions.length > 0 && h('div', { class: 'group-title' },
       h('span', { class: 'grow' }, `Scripts (${sessions.filter(isLive).length} running)`),
       live && h('button', { class: 'link', onClick: () => call('stop_all') }, 'Stop all')),
-    sessions.map(sessionRow),
+    sessions.map((session) => [sessionRow(session), portNotice(session)]),
     projects.map(projectBlock),
   ].flat(Infinity).filter(Boolean));
   list.scrollTop = scroll;
@@ -170,13 +265,18 @@ function onSearchKey(event) {
     render();
     list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
   } else if (event.key === 'Enter' && query.trim() && results[cursor]) {
-    act(...results[cursor]);
+    const [project, item] = results[cursor];
+    if (item.scripts) startGroup(project, item); // a group has no arguments field
+    else if (event.shiftKey) openArgs(project, item);
+    else act(project, item);
   }
 }
 
 async function loadSessions() {
   sessions = await invoke('list_sessions');
   render();
+  owners = await portOwners(sessions); // lsof can take a moment, so this fills in after
+  if (owners.size) render();
 }
 
 async function refresh() {
@@ -193,4 +293,6 @@ window.addEventListener('focus', () => {
   ticker = setInterval(() => tickers.forEach((tick) => tick()), 1000);
 });
 window.addEventListener('blur', () => clearInterval(ticker));
+// Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
+window.addEventListener('blur', () => argsFor && closeArgs());
 refresh();
