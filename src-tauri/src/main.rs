@@ -112,11 +112,12 @@ fn remove_project(state: State<App>, id: String) -> Result<(), String> {
     })
 }
 
+/// `base` is the copy the window loaded, so only its own changes are saved; see `project::merge`.
 #[tauri::command]
-fn update_project(state: State<App>, project: Project) -> Result<(), String> {
+fn update_project(state: State<App>, base: Project, project: Project) -> Result<(), String> {
     state.edit(|config| {
         let slot = config.projects.iter_mut().find(|p| p.id == project.id).ok_or("Unknown project")?;
-        *slot = project;
+        project::merge(slot, &base, project);
         Ok(())
     })
 }
