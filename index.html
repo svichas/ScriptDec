@@ -289,7 +289,7 @@
           <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 2v2.5M9.5 2v2.5M6.5 11.5V14M9.5 11.5V14M2 6.5h2.5M2 9.5h2.5M11.5 6.5H14M11.5 9.5H14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>
             <h3>CPU and memory</h3>
-            <p>Hover a script's terminal tab to see what all its processes use together, like <code>1.2&nbsp;GB&nbsp;·&nbsp;42%</code>. Past 500 MB or 30% CPU, its row in the menu bar window shows it too. macOS only.</p>
+            <p>Hover a script's terminal tab to see what all its processes use together, like <code>1.2&nbsp;GB&nbsp;·&nbsp;42%</code>. CPU is a share of the whole Mac, so 100% means every core is busy. Past 500 MB or 10% CPU, its row in the menu bar window shows it too. macOS only.</p>
           </div>
           <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -439,7 +439,7 @@
               <ul>
                 <li>Running and failed scripts are listed at the top of the menu bar window, each with how long it has run. Restart or stop one there, or click <b>Stop all</b>.</li>
                 <li>Click a running script to open its terminal window: watch the output, scroll back or type into it. <kbd>Cmd+F</kbd> (<kbd>Ctrl+F</kbd> on Windows) finds text in its whole scrollback, and Cmd+click (Ctrl+click) opens a web link it printed.</li>
-                <li>Hover a terminal tab to see the CPU and memory all of its script's processes use. A script past 500 MB or 30% CPU shows it in the menu bar window too. macOS only.</li>
+                <li>Hover a terminal tab to see the CPU and memory all of its script's processes use, with CPU as a share of the whole Mac. A script past 500 MB or 10% CPU shows it in the menu bar window too. macOS only.</li>
                 <li>When a script prints a local address, its port appears as a link, such as <code>:5173</code>, that opens it in your browser.</li>
                 <li>If a script can't start because its port is taken, its row names what holds the port, another script or a leftover process. <b>Free port</b> stops that and restarts yours. macOS only.</li>
                 <li>To add arguments such as <code>--watch</code>, Option-click a script's Run button (Alt-click on Windows). ScriptDeck adds the <code>--</code> npm needs and remembers them for next time.</li>
