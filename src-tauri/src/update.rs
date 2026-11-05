@@ -64,7 +64,7 @@ async fn check(app: &AppHandle) -> tauri_plugin_updater::Result<Option<Update>> 
         // Windows' installer exits the app straight away: stop the scripts as quitting does, and
         // remove the tray icon, which is the cleanup this hook replaces.
         .on_before_exit(move || {
-            handle.state::<crate::App>().sessions.shutdown();
+            crate::stop_scripts_for_exit(&handle);
             handle.cleanup_before_exit();
         })
         .build()?

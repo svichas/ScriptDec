@@ -137,7 +137,9 @@ async fn edit_script(
     let new_key = new.map(|(name, _)| project::script_key(package.as_deref(), name));
     state.edit(|config| {
         let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
-        project::move_pin(&mut project.pinned, &old_key, new_key);
+        project::move_in_groups(project, &old_key, new_key.clone());
+        project::move_pin(&mut project.pinned, &old_key, new_key.clone());
+        project::move_pin(&mut project.keep_alive, &old_key, new_key);
         Ok(())
     })
 }
@@ -184,8 +186,15 @@ fn set_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
     shortcuts.register(shortcut).map_err(|e| format!("Can't use {shortcut} as a shortcut: {e}"))
 }
 
+/// `key` picks up the script's settings; the toolkit and Node installs have none.
 #[tauri::command]
-fn run(state: State<App>, project_id: String, label: String, command: String) -> Result<u32, String> {
+fn run(
+    state: State<App>,
+    project_id: String,
+    label: String,
+    command: String,
+    key: Option<String>,
+) -> Result<u32, String> {
     let project = state.project(&project_id)?;
     let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
     state.sessions.start(Spec {
@@ -195,6 +204,7 @@ fn run(state: State<App>, project_id: String, label: String, command: String) ->
         command,
         cwd: project.path,
         node_bin: node.resolved.as_deref().and_then(node::bin_dir),
+        keep_alive: key.is_some_and(|key| project.keep_alive.contains(&key)),
     })
 }
 
@@ -222,6 +232,18 @@ fn stop_all(state: State<App>) {
 #[tauri::command]
 fn restart(state: State<App>, id: u32) -> Result<(), String> {
     state.sessions.restart(id)
+}
+
+/// Async: lsof and ps take a moment.
+#[tauri::command]
+async fn port_owner(app: AppHandle, port: u16) -> Option<sessions::PortOwner> {
+    app.state::<App>().sessions.port_owner(port)
+}
+
+/// Async: waits, a few seconds at most, for the port to be let go.
+#[tauri::command]
+async fn free_port(app: AppHandle, port: u16, pid: u32) -> Result<(), String> {
+    app.state::<App>().sessions.free_port(port, pid)
 }
 
 #[tauri::command]
@@ -291,6 +313,21 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Cmd+click on a link in the terminal. Unlike `open_url`, any host.
+#[tauri::command]
+fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+    // Script output can print any scheme, and file: or an app's own scheme could run something local.
+    if !is_web_link(&url) {
+        return Err(format!("Refusing to open {url}"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+fn is_web_link(url: &str) -> bool {
+    let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+}
+
 #[tauri::command]
 fn open_homepage(app: AppHandle) -> Result<(), String> {
     app.opener().open_url(HOMEPAGE, None::<&str>).map_err(|e| e.to_string())
@@ -316,6 +353,23 @@ fn hide_popover(app: AppHandle) {
 #[tauri::command]
 fn quit(app: AppHandle) {
     app.exit(0);
+}
+
+/// Quitting and Windows' updater both end here: saves the running scripts for "Reopen running scripts", then stops them.
+fn stop_scripts_for_exit(app: &AppHandle) {
+    let state = app.state::<App>();
+    if state.config.lock().unwrap().settings.reopen_scripts {
+        // Running only, so a script the user is stopping stays stopped. list() is in the order they started.
+        let running = state.sessions.list().into_iter().filter(|s| s.status == Status::Running);
+        let reopen = running
+            .map(|s| config::ReopenScript { project_id: s.project_id, label: s.label, command: s.command })
+            .collect();
+        let _ = state.edit(|config| {
+            config.reopen = reopen;
+            Ok(())
+        });
+    }
+    state.sessions.shutdown();
 }
 
 /// The menu-bar-only look, except while a real window is open so it can be reached with Cmd-Tab.
@@ -377,17 +431,46 @@ fn sessions_changed(app: &AppHandle) {
     }
 }
 
-fn script_failed(app: &AppHandle, session: &SessionView) {
+/// How long a clean run took, as "2m 3s", when it's long enough that you've likely looked away.
+fn long_task(code: Option<i32>, millis: u64) -> Option<String> {
+    let secs = millis / 1000;
+    (code == Some(0) && secs >= 30).then(|| match secs {
+        ..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
+        _ => format!("{}h {}m", secs / 3600, secs / 60 % 60),
+    })
+}
+
+/// The title and body for a run that ended on its own: a crash, or a long task finishing, each behind its own switch.
+fn notification(session: &SessionView, failed: bool, settings: &Settings) -> Option<(String, String)> {
+    let ran = session.ended_at.map_or(0, |end| end.saturating_sub(session.started_at));
+    match (failed, long_task(session.code, ran)) {
+        (true, _) if settings.notify_on_failure => {
+            // A keep-alive script's first crash; if it gives up, the plain notice follows.
+            let restarting = if session.restart_in.is_some() { ", restarting" } else { "" };
+            Some((
+                format!("{} failed", session.label),
+                format!("{}: exit code {}{restarting}", session.project, session.code.unwrap_or_default()),
+            ))
+        }
+        (false, Some(took)) if settings.notify_on_finish => {
+            Some((format!("{} finished in {took}", session.label), session.project.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// A crash, or a long task finishing. Stopped runs never get here.
+fn script_ended(app: &AppHandle, session: &SessionView, failed: bool) {
     // The output is already in front of them, and `pnpm outdated` exiting 1 isn't news.
     let watching = app.get_webview_window("terminal").is_some_and(|window| window.is_focused().unwrap_or(false));
-    if watching || !app.state::<App>().config.lock().unwrap().settings.notify_on_failure {
+    if watching {
         return;
     }
-    let notification = app.notification().builder();
-    let _ = notification
-        .title(format!("{} failed", session.label))
-        .body(format!("{}: exit code {}", session.project, session.code.unwrap_or_default()))
-        .show();
+    let settings = app.state::<App>().config.lock().unwrap().settings.clone();
+    if let Some((title, body)) = notification(session, failed, &settings) {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
 }
 
 // Only macOS tints template icons; a black glyph would vanish on a dark Windows taskbar.
@@ -446,16 +529,21 @@ fn main() {
         .manage(update::Updates::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
-            let config = config::load(&config_path);
+            let mut config = config::load(&config_path);
+            // Cleared at every launch, switch on or off, so an old list never starts scripts later.
+            let reopen = std::mem::take(&mut config.reopen);
+            if !reopen.is_empty() {
+                let _ = config::save(&config_path, &config);
+            }
             let first_run = config.projects.is_empty();
             let settings = config.settings.clone();
-            let (changed, failed) = (app.handle().clone(), app.handle().clone());
+            let (changed, ended) = (app.handle().clone(), app.handle().clone());
             app.manage(App {
                 config: Mutex::new(config),
                 config_path,
                 sessions: Sessions::new(
                     Box::new(move || sessions_changed(&changed)),
-                    Box::new(move |session| script_failed(&failed, session)),
+                    Box::new(move |session, failed| script_ended(&ended, session, failed)),
                 ),
                 popover_hidden_at: Mutex::new(Instant::now()),
             });
@@ -464,6 +552,14 @@ fn main() {
             app.set_theme(settings.theme);
             if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
                 eprintln!("{error}");
+            }
+            if settings.reopen_scripts {
+                for script in reopen {
+                    // Through run, for the project's Node version. A removed project's scripts fail and are skipped.
+                    // shortcut: no script key is saved, so a reopened script doesn't restart on crash until it's
+                    // started from the menu again; save the key with it to keep that.
+                    let _ = run(app.state(), script.project_id, script.label, script.command, None);
+                }
             }
             if first_run {
                 let handle = app.handle().clone();
@@ -506,6 +602,8 @@ fn main() {
             stop,
             stop_all,
             restart,
+            port_owner,
+            free_port,
             clear_session,
             attach,
             send_input,
@@ -513,6 +611,7 @@ fn main() {
             open_settings,
             open_terminal,
             open_url,
+            open_link,
             open_homepage,
             open_latest_release,
             update::check_for_update,
@@ -526,7 +625,71 @@ fn main() {
         .expect("failed to start ScriptDec")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                app.state::<App>().sessions.shutdown();
+                stop_scripts_for_exit(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn announces_clean_runs_of_30_seconds_or_more() {
+        assert_eq!(long_task(Some(0), 31_000).as_deref(), Some("31s"));
+        assert_eq!(long_task(Some(0), 123_400).as_deref(), Some("2m 3s"));
+        assert_eq!(long_task(Some(0), 3_725_000).as_deref(), Some("1h 2m"));
+        assert_eq!(long_task(Some(0), 29_999), None);
+        assert_eq!(long_task(Some(0), 5_000), None);
+        assert_eq!(long_task(Some(1), 60_000), None);
+        assert_eq!(long_task(None, 60_000), None);
+    }
+
+    #[test]
+    fn each_switch_silences_only_its_own_notification() {
+        let ended = |code: i32, secs: u64| SessionView {
+            id: 1,
+            project_id: "p".into(),
+            project: "web".into(),
+            label: "build".into(),
+            command: "pnpm build".into(),
+            status: Status::Exited,
+            code: Some(code),
+            started_at: 1_000,
+            ended_at: Some(1_000 + secs * 1000),
+            url: None,
+            busy_port: None,
+            restart_in: None,
+        };
+        let (long, short, crash) = (ended(0, 123), ended(0, 5), ended(1, 3));
+        let all = Settings::default();
+        let no_finish = Settings { notify_on_finish: false, ..Settings::default() };
+        let no_crash = Settings { notify_on_failure: false, ..Settings::default() };
+        let post = |s: &SessionView, settings| notification(s, s.code != Some(0), settings);
+        let title = |s: &SessionView, settings| post(s, settings).map(|(title, _)| title);
+
+        assert_eq!(post(&long, &all), Some(("build finished in 2m 3s".into(), "web".into())));
+        assert_eq!(post(&crash, &all), Some(("build failed".into(), "web: exit code 1".into())));
+        assert_eq!(post(&short, &all), None);
+        assert_eq!(title(&long, &no_finish), None);
+        assert_eq!(title(&crash, &no_finish).as_deref(), Some("build failed"));
+        assert_eq!(title(&long, &no_crash).as_deref(), Some("build finished in 2m 3s"));
+        assert_eq!(title(&crash, &no_crash), None);
+
+        let restarting = SessionView { restart_in: Some(1), ..crash.clone() };
+        let body = post(&restarting, &all).map(|(_, body)| body);
+        assert_eq!(body.as_deref(), Some("web: exit code 1, restarting"));
+    }
+
+    #[test]
+    fn opens_only_web_links() {
+        assert!(is_web_link("https://example.com/docs?q=1#top"));
+        assert!(is_web_link("http://localhost:3000"));
+        assert!(is_web_link("HTTPS://EXAMPLE.COM"));
+        assert!(!is_web_link("file:///etc/passwd"));
+        assert!(!is_web_link("javascript:alert(1)//https://example.com"));
+        assert!(!is_web_link("vscode://file/Users/me/app.js"));
+        assert!(!is_web_link("ftp://example.com"));
+        assert!(!is_web_link("example.com"));
+    }
 }
