@@ -93,6 +93,7 @@ fn now_ms() -> u64 {
 }
 
 type Sink = Box<dyn Fn(&[u8]) + Send>;
+type OnExit = Box<dyn Fn(&SessionView, bool) + Send + Sync>;
 
 #[derive(Default)]
 struct Inner {
@@ -106,16 +107,13 @@ pub struct Sessions {
     inner: Mutex<Inner>,
     /// Called with no lock held, whenever anything in `list()` changes.
     on_change: Box<dyn Fn() + Send + Sync>,
-    /// Called with no lock held, when a script ends with an error nobody asked for.
-    on_failure: Box<dyn Fn(&SessionView) + Send + Sync>,
+    /// Called with no lock held, when a run ends on its own rather than being stopped, with whether it failed.
+    on_exit: OnExit,
 }
 
 impl Sessions {
-    pub fn new(
-        on_change: Box<dyn Fn() + Send + Sync>,
-        on_failure: Box<dyn Fn(&SessionView) + Send + Sync>,
-    ) -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::default(), on_change, on_failure })
+    pub fn new(on_change: Box<dyn Fn() + Send + Sync>, on_exit: OnExit) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::default(), on_change, on_exit })
     }
 
     pub fn list(&self) -> Vec<SessionView> {
@@ -180,19 +178,19 @@ impl Sessions {
         thread::spawn(move || {
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
             let mut inner = this.inner.lock().unwrap();
-            let mut failed = None;
+            let mut exited = None;
             if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
                 let stopped = s.status == Status::Stopping || s.interrupted;
                 s.status = if stopped { Status::Stopped } else { Status::Exited };
                 s.code = code;
                 s.ended_at = Some(now_ms());
                 s.pty = None; // hangs up anything left behind in the terminal
-                failed = (!stopped && code.is_some_and(|c| c != 0)).then(|| s.view(id));
+                exited = (!stopped).then(|| (s.view(id), code.is_some_and(|c| c != 0)));
             }
             drop(inner);
             (this.on_change)();
-            if let Some(session) = failed {
-                (this.on_failure)(&session);
+            if let Some((session, failed)) = exited {
+                (this.on_exit)(&session, failed);
             }
         });
         (self.on_change)();
@@ -540,14 +538,18 @@ mod tests {
     }
 
     fn new_sessions() -> Arc<Sessions> {
-        Sessions::new(Box::new(|| {}), Box::new(|_| {}))
+        Sessions::new(Box::new(|| {}), Box::new(|_, _| {}))
     }
 
     #[test]
     fn reports_a_crash_but_not_a_clean_exit_or_a_stop_the_user_asked_for() {
         let failures = Arc::new(Mutex::new(Vec::new()));
         let seen = failures.clone();
-        let report = move |s: &SessionView| seen.lock().unwrap().push((s.label.clone(), s.code));
+        let report = move |s: &SessionView, failed: bool| {
+            if failed {
+                seen.lock().unwrap().push((s.label.clone(), s.code));
+            }
+        };
         let sessions = Sessions::new(Box::new(|| {}), Box::new(report));
 
         let clean = sessions.start(spec("exit 0")).unwrap();
@@ -571,6 +573,26 @@ mod tests {
         sessions.start(Spec { label: "boom".into(), ..spec("exit 7") }).unwrap();
         wait_for("failure", || !failures.lock().unwrap().is_empty());
         assert_eq!(*failures.lock().unwrap(), [("boom".to_string(), Some(7))]);
+    }
+
+    #[test]
+    fn reports_a_clean_exit_with_its_start_and_end_but_not_a_stop() {
+        let exits = Arc::new(Mutex::new(Vec::new()));
+        let seen = exits.clone();
+        let report = move |s: &SessionView, failed: bool| seen.lock().unwrap().push((s.clone(), failed));
+        let sessions = Sessions::new(Box::new(|| {}), Box::new(report));
+
+        let stopped = sessions.start(spec("sleep 30")).unwrap();
+        sessions.stop(stopped);
+        wait_for("stop", || view(&sessions, stopped).status == Status::Stopped);
+
+        let id = sessions.start(spec("sleep 1")).unwrap();
+        assert_eq!(view(&sessions, id).ended_at, None);
+        wait_for("exit", || !exits.lock().unwrap().is_empty());
+        let exits = exits.lock().unwrap();
+        let (session, failed) = &exits[0];
+        assert_eq!((exits.len(), session.id, *failed), (1, id, false));
+        assert!(session.ended_at.unwrap() >= session.started_at + 1000);
     }
 
     #[test]

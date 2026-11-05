@@ -15,6 +15,8 @@ pub struct Settings {
     /// Opens the menu bar window from anywhere, as an accelerator such as "Alt+Super+Space".
     pub shortcut: Option<String>,
     pub notify_on_failure: bool,
+    /// When a script ends on its own, with exit 0, after 30 seconds or more.
+    pub notify_on_finish: bool,
     /// None follows the system.
     pub theme: Option<Theme>,
     pub terminal_font_size: u8,
@@ -22,7 +24,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { shortcut: None, notify_on_failure: true, theme: None, terminal_font_size: 12 }
+        Self { shortcut: None, notify_on_failure: true, notify_on_finish: true, theme: None, terminal_font_size: 12 }
     }
 }
 
@@ -100,7 +102,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, r#"{"projects": []}"#).unwrap();
         let settings = load(&path).settings;
-        assert!(settings.notify_on_failure);
+        assert!(settings.notify_on_failure && settings.notify_on_finish);
         assert_eq!((settings.terminal_font_size, settings.theme, settings.shortcut), (12, None, None));
     }
 
