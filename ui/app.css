@@ -127,6 +127,8 @@ button.btn.danger { color: var(--bad); }
 .title, .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title { font-weight: 500; }
 .sub { color: var(--fg-2); font-size: 11px; }
+.usage { flex: none; color: var(--fg-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage:empty { display: none; }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
 
 .empty { padding: 28px 20px; text-align: center; color: var(--fg-2); }

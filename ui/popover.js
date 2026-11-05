@@ -1,6 +1,6 @@
 import {
   call, dotClass, h, icon, iconButton, invoke, isLive, listen, nodeLabel, runScript, scriptLabel,
-  scriptsOf, statusText, togglePin, urlLabel,
+  scriptsOf, statusText, togglePin, urlLabel, usageLabel,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -8,6 +8,8 @@ const MAX_RESULTS = 60;
 
 let projects = [];
 let sessions = [];
+let usage = {}; // session id → { cpu, memory }, polled while the popover is shown
+let poll;
 let query = '';
 let cursor = 0;
 let results = [];
@@ -55,6 +57,12 @@ function urlChip(session) {
   }, urlLabel(session.url));
 }
 
+// Only past 500 MB or 30% CPU, so quiet scripts stay uncluttered.
+function rowUsage(id) {
+  const used = usage[id];
+  return used && (used.memory > 500 * 2 ** 20 || used.cpu > 30) ? usageLabel(used) : '';
+}
+
 function sessionRow(session) {
   const live = isLive(session);
   return h('div', { class: 'row', onClick: () => openTerminal(session.id) },
@@ -62,6 +70,7 @@ function sessionRow(session) {
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, session.label),
       h('div', { class: 'sub' }, `${session.project} · ${statusText(session)}`)),
+    h('span', { class: 'usage', 'data-session': session.id }, rowUsage(session.id)),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
     live
@@ -171,6 +180,15 @@ async function refresh() {
   await loadSessions();
 }
 
+async function loadUsage() {
+  usage = await invoke('session_usage');
+  // In place: rebuilding the list every 2 s would drop a click that straddles it.
+  for (const el of list.querySelectorAll('.usage')) el.textContent = rowUsage(el.dataset.session);
+}
+
 listen('sessions-changed', loadSessions);
 window.addEventListener('focus', () => { search.focus(); search.select(); refresh(); });
+// WebKit throttles timers in the hidden popover, so poll from focus to blur, which hides it.
+window.addEventListener('focus', () => { clearInterval(poll); poll = setInterval(loadUsage, 2000); loadUsage(); });
+window.addEventListener('blur', () => clearInterval(poll));
 refresh();

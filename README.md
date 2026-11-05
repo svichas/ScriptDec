@@ -22,6 +22,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 
 - **Every script, one click away.** Root scripts, every workspace package's scripts (`pnpm -F @acme/app run start`, and the yarn, npm and bun equivalents), and your own commands.
 - **Leave them running.** Each script has its own terminal. Open it from the menu bar, type into it, restart or stop it. Quitting ScriptDec stops every script it started.
+- **CPU and memory.** Hover a script's terminal tab to see what all its processes use together, like `1.2 GB · 42%`. Past 500 MB or 30% CPU, its row in the menu bar window shows it too. macOS only.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
 - **Dev server links.** The port a script prints becomes a one-click link.

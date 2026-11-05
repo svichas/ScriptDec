@@ -1,4 +1,4 @@
-import { call, Channel, dotClass, h, iconButton, invoke, isLive, listen, statusText, urlLabel } from './shared.js';
+import { call, Channel, dotClass, h, iconButton, invoke, isLive, listen, statusText, urlLabel, usageLabel } from './shared.js';
 
 const tabs = document.getElementById('tabs');
 const actions = document.getElementById('actions');
@@ -41,6 +41,8 @@ term.open(screen);
 
 let sessions = [];
 let active = null;
+let usage = {}; // session id → { cpu, memory }, polled while the window is visible
+let poll;
 
 term.onData((data) => {
   if (active != null) invoke('send_input', { id: active, data });
@@ -65,12 +67,18 @@ async function select(id) {
   term.focus();
 }
 
+function tabTitle(session) {
+  const used = usage[session.id];
+  return `${session.project}: ${session.command} (${statusText(session)}${used ? ` · ${usageLabel(used)}` : ''})`;
+}
+
 function render() {
   tabs.replaceChildren(...sessions.map((session) => h('button', {
     class: `tab ${session.id === active ? 'active' : ''}`,
     role: 'tab',
     'aria-selected': String(session.id === active),
-    title: `${session.project}: ${session.command} (${statusText(session)})`,
+    title: tabTitle(session),
+    'data-session': session.id,
     onClick: () => select(session.id),
   }, h('span', { class: `dot ${dotClass(session)}` }), session.label)));
 
@@ -96,6 +104,21 @@ async function load() {
   render();
 }
 
+async function loadUsage() {
+  usage = await invoke('session_usage');
+  // Titles change in place: rebuilding the tabs every 2 s would drop a click that straddles it.
+  for (const tab of tabs.children) {
+    const session = sessions.find((s) => s.id === Number(tab.dataset.session));
+    if (session) tab.title = tabTitle(session);
+  }
+}
+
+// Poll only while the window can be seen, so a minimised one samples nothing.
+function pollUsage() {
+  clearInterval(poll);
+  if (document.visibilityState === 'visible') { poll = setInterval(loadUsage, 2000); loadUsage(); }
+}
+
 listen('sessions-changed', load);
 listen('select-session', ({ payload }) => select(payload));
 listen('settings-changed', ({ payload }) => {
@@ -106,3 +129,5 @@ listen('settings-changed', ({ payload }) => {
 const wanted = Number(new URLSearchParams(location.search).get('session'));
 if (wanted) await select(wanted);
 load();
+document.addEventListener('visibilitychange', pollUsage);
+pollUsage();
