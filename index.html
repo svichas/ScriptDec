@@ -277,9 +277,34 @@
             <p>Each script gets its own real terminal. Open it from the menu bar, type into it, restart or stop it. Quitting ScriptDec stops everything it started.</p>
           </div>
           <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v5.5M5 3.9a5 5 0 1 0 6 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+            <h3>Reopen after a restart</h3>
+            <p>Turn on Reopen running scripts, and the scripts still running when you quit, log out or update start again with ScriptDec. Ones you stopped stay stopped.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h8M2.5 7.5h4M2.5 11h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="10.5" cy="10" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m12.4 11.9 1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+            <h3>Find in the output</h3>
+            <p>Cmd+F (Ctrl+F on Windows) searches a terminal's whole scrollback. Cmd+click (Ctrl+click) opens any web link a script prints.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.5 2v2.5M9.5 2v2.5M6.5 11.5V14M9.5 11.5V14M2 6.5h2.5M2 9.5h2.5M11.5 6.5H14M11.5 9.5H14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+            <h3>CPU and memory</h3>
+            <p>Hover a script's terminal tab to see what all its processes use together, like <code>1.2&nbsp;GB&nbsp;·&nbsp;42%</code>. Past 500 MB or 30% CPU, its row in the menu bar window shows it too. macOS only.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <h3>AI agents (MCP)</h3>
+            <p>Turn it on in Settings, and Claude Code or another agent can see your scripts, read and search their output, and start, restart or stop them. Agents never type into a terminal. Not on Windows yet.</p>
+          </div>
+          <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
             <h3>Search across all projects</h3>
             <p>Click the icon or press your shortcut, type a few letters, press Enter.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4v8l5.5-4z" fill="currentColor"/><path d="M9 8h2M12.5 8h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></div>
+            <h3>Run with arguments</h3>
+            <p>Option-click a script's Run button (Alt-click on Windows), or press Shift+Enter on a search result, then type <code>--watch</code>. ScriptDec adds the <code>--</code> npm needs and remembers the arguments for next time.</p>
           </div>
           <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m8 2.2 1.8 3.7 4 .6-2.9 2.8.7 4L8 11.5l-3.6 1.9.7-4L2.2 6.5l4-.6z" fill="currentColor" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></div>
@@ -287,9 +312,19 @@
             <p>Pinned scripts stay at the top, and the menu bar icon shows how many are running.</p>
           </div>
           <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 13.5 5.2 8 7.9 2.5 5.2zM2.5 8.2 8 10.9l5.5-2.7M2.5 11.1 8 13.8l5.5-2.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <h3>Groups</h3>
+            <p>Start the scripts you always run together, say web, api and a worker, with one click, and stop them the same way. Each still gets its own terminal.</p>
+          </div>
+          <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8 8M12 9.5V12a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 3 12V6a1.5 1.5 0 0 1 1.5-1.5H7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
             <h3>Dev server links</h3>
             <p>The port a script prints becomes a one-click link to it.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m4.1 11.9 7.8-7.8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>
+            <h3>Port already in use</h3>
+            <p>When a script can't start because its port is taken, its row names what holds it, another script or a leftover process, and Free port stops that and restarts yours. macOS only.</p>
           </div>
           <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13.4 4.9v6.2L8 14.2l-5.4-3.1V4.9z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
@@ -305,6 +340,16 @@
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 10.5V7a3.5 3.5 0 0 1 7 0v3.5l1.2 1.5H3.3zM6.5 14h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
             <h3>Crash notifications</h3>
             <p>A notification when a script fails on its own. Stopping it yourself doesn't count, and neither does a failure you're watching.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.6h-2.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <h3>Restart on crash</h3>
+            <p>Switch it on per script, and a script that dies on its own comes back after 1, 2, 4, 8 and 16 seconds. If all five restarts crash within a minute, it stays down.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 9V6.5M6.5 2h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>
+            <h3>Durations</h3>
+            <p>Each script shows how long it has been running, or how long it took. Anything that takes 30 seconds or more posts a notification when it finishes.</p>
           </div>
           <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M12.4 3.6l-1.2 1.2M4.8 11.2l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></div>
@@ -371,6 +416,7 @@
             <a href="#workspaces">Workspaces</a>
             <a href="#node">Node versions</a>
             <a href="#editing">Editing scripts</a>
+            <a href="#agents">AI agents</a>
             <a href="#settings">Settings</a>
             <a href="#how">How it works</a>
             <a href="#build">Build from source</a>
@@ -391,15 +437,21 @@
               <h3>Running scripts</h3>
               <p>Every script runs in its own terminal through your login shell, so it gets the same <code>PATH</code> as your terminal app, and colours, prompts and interactive tools work as usual.</p>
               <ul>
-                <li>Running and failed scripts are listed at the top of the menu bar window. Restart or stop one there, or click <b>Stop all</b>.</li>
-                <li>Click a running script to open its terminal window: watch the output, scroll back or type into it.</li>
+                <li>Running and failed scripts are listed at the top of the menu bar window, each with how long it has run. Restart or stop one there, or click <b>Stop all</b>.</li>
+                <li>Click a running script to open its terminal window: watch the output, scroll back or type into it. <kbd>Cmd+F</kbd> (<kbd>Ctrl+F</kbd> on Windows) finds text in its whole scrollback, and Cmd+click (Ctrl+click) opens a web link it printed.</li>
+                <li>Hover a terminal tab to see the CPU and memory all of its script's processes use. A script past 500 MB or 30% CPU shows it in the menu bar window too. macOS only.</li>
                 <li>When a script prints a local address, its port appears as a link, such as <code>:5173</code>, that opens it in your browser.</li>
+                <li>If a script can't start because its port is taken, its row names what holds the port, another script or a leftover process. <b>Free port</b> stops that and restarts yours. macOS only.</li>
+                <li>To add arguments such as <code>--watch</code>, Option-click a script's Run button (Alt-click on Windows). ScriptDec adds the <code>--</code> npm needs and remembers them for next time.</li>
                 <li>Stopping a script escalates from Ctrl-C to SIGTERM to SIGKILL on its whole process tree, so no stray child keeps a port busy.</li>
-                <li>Quitting ScriptDec stops every script it started.</li>
+                <li>Quitting ScriptDec stops every script it started. With <b>Reopen running scripts</b> on in Settings › General, the ones still running start again the next time ScriptDec opens, after an update too.</li>
                 <li>The menu bar icon shows how many scripts are running. Right-click it for <b>Open ScriptDec</b>, <b>Settings…</b>, <b>Stop All Scripts</b> and <b>Quit ScriptDec</b>.</li>
               </ul>
+              <h4>Restart on crash</h4>
+              <p>Turn on the <b>Restart if it crashes</b> switch on a script's row in its project's settings. When the script dies on its own, it comes back after 1 second, then 2, 4, 8 and 16. If all five restarts crash within a minute of starting, it stays down. Stopping it yourself never restarts it.</p>
               <h4>Notifications</h4>
-              <p>With <b>Notify when a script fails</b> on in Settings › General, you get a system notification when a script exits with an error on its own. Stopping a script yourself doesn't count, and neither does a failure you're watching in its terminal.</p>
+              <p>With <b>Notify when a script fails</b> on in Settings › General, you get a system notification when a script exits with an error on its own. Stopping a script yourself doesn't count, and neither does a failure you're watching in its terminal. A script that restarts on crash notifies once as it starts restarting, and again if it gives up.</p>
+              <p><b>Notify when a long script finishes</b> tells you when one that ran for 30 seconds or more, such as an install or a build, is done.</p>
             </article>
 
             <article id="search">
@@ -407,6 +459,8 @@
               <p>Start typing in the menu bar window to search every script in every project, by project, package, script name or command.</p>
               <ul>
                 <li><kbd>↑</kbd> <kbd>↓</kbd> pick a result and <kbd>Enter</kbd> runs it. If it's already running, <kbd>Enter</kbd> opens its terminal.</li>
+                <li><kbd>Shift+Enter</kbd> opens a field for arguments, such as <code>--watch</code>, before it runs.</li>
+                <li>Groups show up in the results too. <kbd>Enter</kbd> starts the scripts in one that aren't running yet.</li>
                 <li><kbd>Esc</kbd> clears the search. Press it again to close the window.</li>
                 <li>Star a script to pin it. A project shows its pinned and custom scripts, or its root <code>package.json</code> scripts until you pin something. Everything else is one search away.</li>
                 <li>To open ScriptDec from any app, record a shortcut under <b>Open ScriptDec</b> in Settings › General. It must include Ctrl, Option or Cmd, so it can't take over a plain key everywhere.</li>
@@ -453,13 +507,24 @@
               </ul>
             </article>
 
+            <article id="agents">
+              <h3>AI agents (MCP)</h3>
+              <p>ScriptDec has an <a href="https://modelcontextprotocol.io">MCP</a> server, so Claude Code or another AI agent can list your scripts, read and search their output, and start, restart or stop them. It's off by default, and not on Windows yet.</p>
+              <ol>
+                <li>Turn on <b>Let AI agents read and restart scripts (MCP)</b> in Settings › General.</li>
+                <li>Click <b>Copy</b> beside <b>Add to Claude Code</b> and run the command in your terminal. Another agent needs a stdio server that runs the same app path with <code>--mcp</code>.</li>
+              </ol>
+              <p class="note">Agents never type into a terminal. They reach ScriptDec through a socket only your user can open, only while the switch is on, and no network port is opened. An agent can read everything your scripts print, so leave the switch off if that includes secrets.</p>
+            </article>
+
             <article id="settings">
               <h3>Settings</h3>
               <p>Open Settings from the gear in the menu bar window, or right-click the menu bar icon.</p>
               <ul>
                 <li><b>Projects.</b> Add folders with <b>+</b> or by dropping them on the window. Rename a project by editing its name, or remove it from ScriptDec; your files aren't touched.</li>
+                <li><b>Groups.</b> Under <b>Groups</b> in a project's settings, name a group, click <b>Add</b> and tick its scripts. The group gets a row in the menu bar window that starts or stops them all.</li>
                 <li><b>Toolkit.</b> Install, Outdated, Update, Audit and Clean reinstall run with the project's package manager, each in its own terminal like a script. Clean reinstall deletes <code>node_modules</code> first, so it asks before it runs.</li>
-                <li><b>General.</b> Launch at login, the global shortcut, failure notifications, a system, light or dark theme, the terminal font size, and <b>Check for Updates</b>.</li>
+                <li><b>General.</b> Launch at login, reopening running scripts, the global shortcut, failure and long-script notifications, a system, light or dark theme, the terminal font size, AI agent access, and <b>Check for Updates</b>.</li>
               </ul>
             </article>
 
@@ -471,6 +536,7 @@
                 <li><code>src-tauri/src/project.rs</code> reads and edits <code>package.json</code> and finds workspaces. <code>node.rs</code> resolves Node versions across nvm, fnm and Volta.</li>
                 <li><code>ui/</code> has no framework and no build step. The terminal is <a href="https://xtermjs.org">xterm.js</a>, vendored in <code>ui/vendor/</code>.</li>
                 <li><code>src-tauri/src/update.rs</code> updates the app from the latest GitHub release with the <a href="https://tauri.app/plugin/updater/">Tauri updater</a>.</li>
+                <li><code>src-tauri/src/mcp.rs</code> is the MCP server for AI agents. <code>ScriptDec --mcp</code>, which an agent launches, pipes its stdio to a Unix socket the app opens in its config folder while the switch is on.</li>
                 <li>Projects and settings live in <code>config.json</code> in the app's config folder: <code>~/Library/Application Support/com.scriptdec.desktop/</code> on macOS, <code>%APPDATA%\com.scriptdec.desktop\</code> on Windows.</li>
               </ul>
               <p class="note"><b>No telemetry.</b> ScriptDec has no account and no analytics. On its own it only fetches the latest release's <code>latest.json</code> from GitHub, at most every six hours, and it installs only updates signed with the release key. It only opens <code>localhost</code> links found in script output.</p>
