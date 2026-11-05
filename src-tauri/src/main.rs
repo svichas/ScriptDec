@@ -137,6 +137,7 @@ async fn edit_script(
     let new_key = new.map(|(name, _)| project::script_key(package.as_deref(), name));
     state.edit(|config| {
         let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
+        project::move_in_groups(project, &old_key, new_key.clone());
         project::move_pin(&mut project.pinned, &old_key, new_key.clone());
         project::move_pin(&mut project.keep_alive, &old_key, new_key);
         Ok(())

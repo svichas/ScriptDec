@@ -24,6 +24,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Leave them running.** Each script has its own terminal. Open it from the menu bar, type into it, restart or stop it. Quitting ScriptDec stops every script it started.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
+- **Groups.** Start the scripts you always run together, say web, api and a worker, with one click, and stop them the same way. Each still gets its own terminal.
 - **Dev server links.** The port a script prints becomes a one-click link.
 - **Node per project.** Follows `.nvmrc`, `.node-version` or a Volta pin (including up the tree), or pick any version installed with nvm, fnm or Volta. Missing versions get an install button.
 - **Edit `package.json` scripts.** Add, change, rename or delete them, for the root or any workspace package. Key order, indentation and line endings stay as they were.
@@ -40,7 +41,7 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
   <img src="docs/settings-light.png" width="860" alt="The Settings window: a project's Node version, toolkit, custom scripts and package.json scripts">
 </picture>
 
-- **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands and `package.json` scripts.
+- **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands, groups and `package.json` scripts.
 - **General.** Launch at login, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
 
 ## Install

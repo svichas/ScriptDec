@@ -39,6 +39,8 @@ pub struct Project {
     pub pinned: Vec<String>,
     /// Script keys restarted when they crash.
     pub keep_alive: Vec<String>,
+    /// Scripts started and stopped together from one row in the menu bar.
+    pub groups: Vec<Group>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -47,6 +49,15 @@ pub struct CustomScript {
     pub id: String,
     pub name: String,
     pub command: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    /// Script keys, as in `pinned`.
+    pub scripts: Vec<String>,
 }
 
 pub fn load(path: &Path) -> Config {
@@ -94,6 +105,15 @@ mod tests {
         let project = Project { id: "a".into(), name: "ui".into(), ..Default::default() };
         save(&path, &Config { projects: vec![project], ..Default::default() }).unwrap();
         assert_eq!(load(&path).projects[0].name, "ui");
+    }
+
+    #[test]
+    fn groups_survive_a_relaunch() {
+        let path = temp_file("groups");
+        let scripts = vec![":web".to_string(), "@acme/api:dev".to_string()];
+        let project = Project { groups: vec![Group { name: "dev".into(), scripts, ..Default::default() }], ..Default::default() };
+        save(&path, &Config { projects: vec![project], ..Default::default() }).unwrap();
+        assert_eq!(load(&path).projects[0].groups[0].scripts, [":web", "@acme/api:dev"]);
     }
 
     #[test]
