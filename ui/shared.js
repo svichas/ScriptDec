@@ -121,7 +121,7 @@ export function portText(session, owner) {
  * `arm` gets the key of the button waiting for its second click, or null.
  */
 export function freePortButton(session, owner, confirming, arm) {
-  if (!owner) return null;
+  if (!session.busyPort || !owner) return null; // owners can still hold a restarted script's old entry
   const key = `${session.id}:${owner.pid}`; // a new owner needs a new confirmation
   const armed = confirming === key;
   return h('button', {
