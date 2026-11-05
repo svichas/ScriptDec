@@ -89,6 +89,10 @@ struct Inner {
     next_id: u32,
     /// The one session currently shown in the terminal window.
     sink: Option<(u32, Sink)>,
+    /// Set by `shutdown()`, so a restart still reaping can't start a run that outlives the app.
+    /// shortcut: never cleared, so if Windows' installer fails to launch after `on_before_exit`, no script starts
+    /// until ScriptDec is reopened; clear it on that error if it comes up.
+    quitting: bool,
 }
 
 pub struct Sessions {
@@ -120,6 +124,9 @@ impl Sessions {
             return Err(format!("Folder not found: {}", spec.cwd));
         }
         let mut inner = self.inner.lock().unwrap();
+        if inner.quitting {
+            return Err("ScriptDec is quitting".into());
+        }
         let existing = inner
             .sessions
             .iter()
@@ -334,6 +341,7 @@ impl Sessions {
     pub fn shutdown(&self) {
         let targets: Vec<_> = {
             let mut inner = self.inner.lock().unwrap();
+            inner.quitting = true;
             let alive = inner.sessions.iter_mut().filter(|(_, s)| s.pty.is_some());
             alive
                 .map(|(id, s)| {
@@ -551,14 +559,14 @@ mod tests {
             view(&sessions, typed).status == Status::Stopped
         });
 
-        let quit = sessions.start(spec("echo ready; sleep 30")).unwrap();
+        let quit = sessions.start(spec("echo ready; sleep 60")).unwrap();
         wait_for("ready", || output(&sessions, quit).contains("ready"));
-        sessions.shutdown();
-        wait_for("quit", || view(&sessions, quit).status == Status::Stopped);
 
         assert!(failures.lock().unwrap().is_empty());
         sessions.start(Spec { label: "boom".into(), ..spec("exit 7") }).unwrap();
         wait_for("failure", || !failures.lock().unwrap().is_empty());
+        sessions.shutdown(); // last, since nothing starts once quitting
+        wait_for("quit", || view(&sessions, quit).status == Status::Stopped);
         assert_eq!(*failures.lock().unwrap(), [("boom".to_string(), Some(7))]);
     }
 
@@ -670,6 +678,18 @@ mod tests {
         let shell = printed_pid(&sessions, id, "child=");
         sessions.shutdown();
         wait_for("shell gone", || !pid_alive(shell));
+    }
+
+    #[test]
+    fn quitting_during_a_restart_starts_no_new_run() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("trap '' INT; echo child=$$; while true; do sleep 1; done")).unwrap();
+        let shell = printed_pid(&sessions, id, "child=");
+        sessions.restart(id).unwrap(); // Ctrl-C is ignored, so the restart waits on its reap
+        sessions.shutdown();
+        wait_for("shell gone", || !pid_alive(shell));
+        thread::sleep(Duration::from_secs(1)); // the reap polls every 50 ms, then would start the new run
+        assert_eq!(view(&sessions, id).status, Status::Stopped);
     }
 
     #[test]
