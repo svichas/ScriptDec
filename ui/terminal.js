@@ -68,7 +68,7 @@ async function select(id) {
 }
 
 function tabTitle(session) {
-  const used = usage[session.id];
+  const used = isLive(session) && usage[session.id]; // the last poll can predate a stop
   return `${session.project}: ${session.command} (${statusText(session)}${used ? ` · ${usageLabel(used)}` : ''})`;
 }
 

@@ -70,7 +70,7 @@ function sessionRow(session) {
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, session.label),
       h('div', { class: 'sub' }, `${session.project} · ${statusText(session)}`)),
-    h('span', { class: 'usage', 'data-session': session.id }, rowUsage(session.id)),
+    live && h('span', { class: 'usage', 'data-session': session.id }, rowUsage(session.id)),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
     live
