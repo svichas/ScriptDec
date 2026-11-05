@@ -108,6 +108,8 @@ button.btn.danger { color: var(--bad); }
 .dot.on { background: var(--ok); }
 .dot.busy { background: var(--warn); }
 .dot.bad { background: var(--bad); }
+/* A group with only some of its scripts running. */
+.dot.some { background: linear-gradient(90deg, var(--ok) 50%, var(--idle) 50%); }
 /* Transform and opacity only, so the pulse costs no repaints. */
 .dot.on::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-out infinite; }
 @keyframes pulse { from { transform: scale(1); opacity: 0.55; } to { transform: scale(2.8); opacity: 0; } }
