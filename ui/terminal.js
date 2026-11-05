@@ -1,4 +1,7 @@
-import { call, Channel, dotClass, h, iconButton, invoke, isLive, listen, MAC, statusText, urlLabel } from './shared.js';
+import {
+  call, Channel, dotClass, freePortButton, h, iconButton, invoke, isLive, listen, MAC, portOwners, portText,
+  statusText, urlLabel,
+} from './shared.js';
 
 const tabs = document.getElementById('tabs');
 const actions = document.getElementById('actions');
@@ -49,6 +52,9 @@ term.open(screen);
 
 let sessions = [];
 let active = null;
+let owners = new Map(); // session id → what holds its busy port
+let confirming = null; // the Free port button waiting for its second click
+const arm = (key) => { confirming = key; render(); };
 
 term.onData((data) => {
   if (active != null) invoke('send_input', { id: active, data });
@@ -137,12 +143,15 @@ function render() {
   }, h('span', { class: `dot ${dotClass(session)}` }), session.label)));
 
   const session = sessions.find((s) => s.id === active);
+  const busy = session?.busyPort && portText(session, owners.get(session.id));
   actions.replaceChildren(...(session ? [
+    busy && h('span', { class: 'warn', title: busy }, busy),
+    freePortButton(session, owners.get(session.id), confirming, arm),
     isLive(session) && session.url && h('button', {
       class: 'chip', title: `Open ${session.url}`, onClick: () => call('open_url', { url: session.url }),
     }, urlLabel(session.url)),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
-    isLive(session)
+    isLive(session) || session.restartIn // stopping a pending restart cancels it
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
       : iconButton('close', 'Dismiss', () => call('clear_session', { id: session.id })),
   ].filter(Boolean) : []));
@@ -157,6 +166,8 @@ async function load() {
     if (sessions.length) await select(sessions[sessions.length - 1].id);
   }
   render();
+  owners = await portOwners(sessions); // lsof can take a moment, so this fills in after
+  if (owners.size) render();
 }
 
 listen('sessions-changed', load);
