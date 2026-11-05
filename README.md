@@ -28,6 +28,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Node per project.** Follows `.nvmrc`, `.node-version` or a Volta pin (including up the tree), or pick any version installed with nvm, fnm or Volta. Missing versions get an install button.
 - **Edit `package.json` scripts.** Add, change, rename or delete them, for the root or any workspace package. Key order, indentation and line endings stay as they were.
 - **Crash notifications.** A system notification when a script fails on its own. Stopping one yourself doesn't count, and neither does a failure you're watching in the terminal window.
+- **Durations.** Each script shows how long it has been running, or how long it took. Installs, builds and anything else that take 30 seconds or more post a notification when they finish, unless their terminal is in front.
 - **Toolkit.** Install, outdated, update, audit and clean reinstall, for pnpm, yarn, npm and bun.
 
 ## Settings
@@ -40,7 +41,7 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 </picture>
 
 - **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands and `package.json` scripts.
-- **General.** Launch at login, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
+- **General.** Launch at login, a global shortcut that opens ScriptDec from any app, crash and long-task notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
 
 ## Install
 
