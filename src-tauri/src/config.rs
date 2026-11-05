@@ -18,11 +18,13 @@ pub struct Settings {
     /// None follows the system.
     pub theme: Option<Theme>,
     pub terminal_font_size: u8,
+    /// Lets AI agents read and restart scripts over MCP; see mcp.rs.
+    pub mcp: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { shortcut: None, notify_on_failure: true, theme: None, terminal_font_size: 12 }
+        Self { shortcut: None, notify_on_failure: true, theme: None, terminal_font_size: 12, mcp: false }
     }
 }
 
@@ -101,6 +103,7 @@ mod tests {
         fs::write(&path, r#"{"projects": []}"#).unwrap();
         let settings = load(&path).settings;
         assert!(settings.notify_on_failure);
+        assert!(!settings.mcp);
         assert_eq!((settings.terminal_font_size, settings.theme, settings.shortcut), (12, None, None));
     }
 

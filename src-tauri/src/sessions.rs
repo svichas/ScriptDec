@@ -312,6 +312,12 @@ impl Sessions {
         self.inner.lock().unwrap().sink = None;
     }
 
+    /// The scrollback as plain text, for AI agents.
+    pub fn output(&self, id: u32) -> Option<String> {
+        let scrollback = self.inner.lock().unwrap().sessions.get(&id)?.scrollback.clone();
+        Some(String::from_utf8_lossy(&strip_ansi(&scrollback)).into_owned())
+    }
+
     pub fn send_input(&self, id: u32, data: &[u8]) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(s) = inner.sessions.get_mut(&id) {
@@ -630,6 +636,15 @@ mod tests {
         assert!(text().contains("before"));
         sessions.stop(id);
         wait_for("stop", || view(&sessions, id).status == Status::Stopped);
+    }
+
+    #[test]
+    fn output_for_agents_is_plain_text() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("printf '\\033[31mred\\033[0m plain\\n'")).unwrap();
+        wait_for("exit", || view(&sessions, id).status == Status::Exited);
+        wait_for("output", || sessions.output(id).unwrap().contains("red plain"));
+        assert_eq!(sessions.output(id + 1), None);
     }
 
     #[test]
