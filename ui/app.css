@@ -262,6 +262,11 @@ body.popover { background: transparent; overflow: hidden; }
 .section-head h2 { margin: 0; }
 .page-body .filter { width: 100%; margin-bottom: 6px; }
 .package-title { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 2px; padding: 0 8px 0 12px; font-size: 12px; font-weight: 600; }
+.script-group { margin-bottom: 8px; padding: 8px 10px; }
+.script-group .inline input { flex: 1; }
+.ticks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 12px; max-height: 200px; overflow-y: auto; margin-top: 6px; }
+.ticks label { padding: 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ticks input { margin: 0 6px 0 0; padding: 0; vertical-align: -2px; accent-color: var(--accent); }
 
 /* Settings: General */
 .group { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
