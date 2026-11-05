@@ -823,13 +823,18 @@ mod tests {
     /// Listens on a port the OS picks, since other tests run at the same time, and gives up after a minute.
     const LISTENER: &str = r#"node -e 'require("net").createServer().listen(0, "127.0.0.1", function () { console.log("port=" + this.address().port) }); setTimeout(process.exit, 60000)'"#;
 
-    #[test]
-    fn frees_a_port_held_outside_scriptdec() {
-        let shell = Command::new("sh").args(["-c", &format!("exec {LISTENER}")]).stdout(Stdio::piped()).spawn();
+    /// Runs a listener outside ScriptDec, and returns it with its port.
+    fn listen_outside(listener: &str) -> (std::process::Child, u16) {
+        let shell = Command::new("sh").args(["-c", &format!("exec {listener}")]).stdout(Stdio::piped()).spawn();
         let mut child = shell.unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
-        let port = line.trim().trim_start_matches("port=").parse().unwrap();
+        (child, line.trim().trim_start_matches("port=").parse().unwrap())
+    }
+
+    #[test]
+    fn frees_a_port_held_outside_scriptdec() {
+        let (mut child, port) = listen_outside(LISTENER);
         let sessions = new_sessions();
         let owner = sessions.port_owner(port).unwrap();
         assert_eq!((owner.pid, owner.command.as_str()), (child.id(), "node"));
@@ -838,6 +843,17 @@ mod tests {
         sessions.free_port(port, owner.pid).unwrap();
         assert!(sessions.port_owner(port).is_none());
         child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_holder_that_ignores_sigterm_gets_sigkill_after_2_s() {
+        use std::os::unix::process::ExitStatusExt;
+        let stubborn = LISTENER.replace("setTimeout", r#"process.on("SIGTERM", () => {}); setTimeout"#);
+        let (mut child, port) = listen_outside(&stubborn);
+        let started = Instant::now();
+        new_sessions().free_port(port, child.id()).unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(2), "SIGTERM gets its 2 s first");
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
     }
 
     #[test]
