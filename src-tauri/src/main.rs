@@ -137,7 +137,9 @@ async fn edit_script(
     let new_key = new.map(|(name, _)| project::script_key(package.as_deref(), name));
     state.edit(|config| {
         let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
-        project::move_pin(&mut project.pinned, &old_key, new_key);
+        project::move_in_groups(project, &old_key, new_key.clone());
+        project::move_pin(&mut project.pinned, &old_key, new_key.clone());
+        project::move_pin(&mut project.keep_alive, &old_key, new_key);
         Ok(())
     })
 }
@@ -184,8 +186,15 @@ fn set_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
     shortcuts.register(shortcut).map_err(|e| format!("Can't use {shortcut} as a shortcut: {e}"))
 }
 
+/// `key` picks up the script's settings; the toolkit and Node installs have none.
 #[tauri::command]
-fn run(state: State<App>, project_id: String, label: String, command: String) -> Result<u32, String> {
+fn run(
+    state: State<App>,
+    project_id: String,
+    label: String,
+    command: String,
+    key: Option<String>,
+) -> Result<u32, String> {
     let project = state.project(&project_id)?;
     let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
     state.sessions.start(Spec {
@@ -195,6 +204,7 @@ fn run(state: State<App>, project_id: String, label: String, command: String) ->
         command,
         cwd: project.path,
         node_bin: node.resolved.as_deref().and_then(node::bin_dir),
+        keep_alive: key.is_some_and(|key| project.keep_alive.contains(&key)),
     })
 }
 
@@ -216,6 +226,18 @@ fn stop_all(state: State<App>) {
 #[tauri::command]
 fn restart(state: State<App>, id: u32) -> Result<(), String> {
     state.sessions.restart(id)
+}
+
+/// Async: lsof and ps take a moment.
+#[tauri::command]
+async fn port_owner(app: AppHandle, port: u16) -> Option<sessions::PortOwner> {
+    app.state::<App>().sessions.port_owner(port)
+}
+
+/// Async: waits, a few seconds at most, for the port to be let go.
+#[tauri::command]
+async fn free_port(app: AppHandle, port: u16, pid: u32) -> Result<(), String> {
+    app.state::<App>().sessions.free_port(port, pid)
 }
 
 #[tauri::command]
@@ -283,6 +305,21 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
         return Err(format!("Refusing to open {url}"));
     }
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Cmd+click on a link in the terminal. Unlike `open_url`, any host.
+#[tauri::command]
+fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+    // Script output can print any scheme, and file: or an app's own scheme could run something local.
+    if !is_web_link(&url) {
+        return Err(format!("Refusing to open {url}"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+fn is_web_link(url: &str) -> bool {
+    let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
 }
 
 #[tauri::command]
@@ -394,10 +431,12 @@ fn script_failed(app: &AppHandle, session: &SessionView) {
     if watching || !app.state::<App>().config.lock().unwrap().settings.notify_on_failure {
         return;
     }
+    // A keep-alive script's first crash; if it gives up, the plain notice follows.
+    let restarting = if session.restart_in.is_some() { ", restarting" } else { "" };
     let notification = app.notification().builder();
     let _ = notification
         .title(format!("{} failed", session.label))
-        .body(format!("{}: exit code {}", session.project, session.code.unwrap_or_default()))
+        .body(format!("{}: exit code {}{restarting}", session.project, session.code.unwrap_or_default()))
         .show();
 }
 
@@ -484,7 +523,9 @@ fn main() {
             if settings.reopen_scripts {
                 for script in reopen {
                     // Through run, for the project's Node version. A removed project's scripts fail and are skipped.
-                    let _ = run(app.state(), script.project_id, script.label, script.command);
+                    // shortcut: no script key is saved, so a reopened script doesn't restart on crash until it's
+                    // started from the menu again; save the key with it to keep that.
+                    let _ = run(app.state(), script.project_id, script.label, script.command, None);
                 }
             }
             if first_run {
@@ -527,6 +568,8 @@ fn main() {
             stop,
             stop_all,
             restart,
+            port_owner,
+            free_port,
             clear_session,
             attach,
             send_input,
@@ -534,6 +577,7 @@ fn main() {
             open_settings,
             open_terminal,
             open_url,
+            open_link,
             open_homepage,
             open_latest_release,
             update::check_for_update,
@@ -550,4 +594,21 @@ fn main() {
                 stop_scripts_for_exit(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_only_web_links() {
+        assert!(is_web_link("https://example.com/docs?q=1#top"));
+        assert!(is_web_link("http://localhost:3000"));
+        assert!(is_web_link("HTTPS://EXAMPLE.COM"));
+        assert!(!is_web_link("file:///etc/passwd"));
+        assert!(!is_web_link("javascript:alert(1)//https://example.com"));
+        assert!(!is_web_link("vscode://file/Users/me/app.js"));
+        assert!(!is_web_link("ftp://example.com"));
+        assert!(!is_web_link("example.com"));
+    }
 }

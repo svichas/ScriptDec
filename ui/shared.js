@@ -61,6 +61,7 @@ export const call = (command, args) => invoke(command, args).catch((error) => { 
 export const isLive = (session) => session.status === 'running' || session.status === 'stopping';
 
 export function statusText(session) {
+  if (session.restartIn) return `crashed, restarting in ${session.restartIn}s`;
   if (session.status === 'exited') return session.code === 0 ? 'finished' : `failed (exit ${session.code})`;
   return session.status;
 }
@@ -80,9 +81,19 @@ export function scriptsOf(project) {
 
 export const shortPackage = (name) => name.split('/').pop();
 export const scriptLabel = (s) => (s.package ? `${shortPackage(s.package)} ${s.name}` : s.name);
+export const missingLabel = (key) => `${key.replace(/^:/, '')} (missing)`;
+
+/** A group's scripts in menu order, and its keys that match none: deleted or renamed outside ScriptDec. */
+export function groupScripts(project, group) {
+  const all = scriptsOf(project);
+  return {
+    scripts: all.filter((s) => group.scripts.includes(s.key)),
+    missing: group.scripts.filter((key) => !all.some((s) => s.key === key)),
+  };
+}
 
 export function runScript(project, script) {
-  return call('run', { projectId: project.id, label: scriptLabel(script), command: script.command });
+  return call('run', { projectId: project.id, label: scriptLabel(script), command: script.command, key: script.key });
 }
 
 export function saveProject({ scan, ...project }) {
@@ -101,3 +112,38 @@ export function nodeLabel(node) {
 }
 
 export const urlLabel = (url) => `:${new URL(url).port}`;
+
+/** What holds each busy port, by session id: null when lsof can't see it. */
+export async function portOwners(sessions) {
+  const busy = sessions.filter((s) => s.busyPort);
+  const owners = await Promise.all(busy.map((s) => invoke('port_owner', { port: s.busyPort })));
+  return new Map(busy.map((s, i) => [s.id, owners[i]]));
+}
+
+/** "Port 3000 is in use by node (pid 4120)", or by one of our scripts. */
+export function portText(session, owner) {
+  const script = owner?.session;
+  const by = script ? `${script.label} in ${script.project}` : owner && `${owner.command} (pid ${owner.pid})`;
+  return `Port ${session.busyPort} is in use${by ? ` by ${by}` : ''}`;
+}
+
+/**
+ * Stops what holds the port, then restarts the script. It asks first, like Remove:
+ * `arm` gets the key of the button waiting for its second click, or null.
+ */
+export function freePortButton(session, owner, confirming, arm) {
+  if (!session.busyPort || !owner) return null; // owners can still hold a restarted script's old entry
+  const key = `${session.id}:${owner.pid}`; // a new owner needs a new confirmation
+  const armed = confirming === key;
+  return h('button', {
+    class: `btn ${armed ? 'danger' : ''}`,
+    onClick: (event) => {
+      event.stopPropagation();
+      arm(armed ? null : key);
+      if (!armed) return;
+      // A refusal names the new owner in a toast, and the windows reload.
+      call('free_port', { port: session.busyPort, pid: owner.pid })
+        .then(() => call('restart', { id: session.id }), () => {});
+    },
+  }, armed ? 'Free port and restart?' : 'Free port');
+}

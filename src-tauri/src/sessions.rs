@@ -11,6 +11,8 @@ use std::{
 };
 
 const SCROLLBACK: usize = 1 << 20;
+/// A second of restart backoff, shortened so a test doesn't wait 31 s for a script to give up.
+const BACKOFF_STEP: Duration = if cfg!(test) { Duration::from_millis(10) } else { Duration::from_secs(1) };
 
 /// Everything needed to (re)start a script.
 #[derive(Clone)]
@@ -21,6 +23,8 @@ pub struct Spec {
     pub command: String,
     pub cwd: String,
     pub node_bin: Option<PathBuf>,
+    /// Restart it when it crashes.
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
@@ -45,6 +49,17 @@ pub struct SessionView {
     pub status: Status,
     pub code: Option<i32>,
     pub url: Option<String>,
+    pub busy_port: Option<u16>,
+    /// How long a crashed keep-alive script waits before it restarts, in seconds.
+    pub restart_in: Option<u32>,
+}
+
+/// What listens on a port: a stray process, or one of our scripts.
+#[derive(Serialize)]
+pub struct PortOwner {
+    pub pid: u32,
+    pub command: String,
+    pub session: Option<SessionView>,
 }
 
 struct Pty {
@@ -57,6 +72,8 @@ struct Session {
     status: Status,
     code: Option<i32>,
     url: Option<String>,
+    /// The port the script said was taken.
+    busy_port: Option<u16>,
     pid: u32,
     /// Bumped on restart so the old process's threads can't touch the new run.
     run: u32,
@@ -64,6 +81,8 @@ struct Session {
     pty: Option<Pty>,
     /// Ctrl-C was typed in the terminal, so ending now is the user's doing, not a crash.
     interrupted: bool,
+    /// Backoff steps until this crashed run restarts; taking it away cancels the restart.
+    restart_in: Option<u32>,
 }
 
 impl Session {
@@ -77,6 +96,8 @@ impl Session {
             status: self.status,
             code: self.code,
             url: self.url.clone(),
+            busy_port: self.busy_port,
+            restart_in: self.restart_in,
         }
     }
 }
@@ -89,6 +110,10 @@ struct Inner {
     next_id: u32,
     /// The one session currently shown in the terminal window.
     sink: Option<(u32, Sink)>,
+    /// Set by `shutdown()`, so a restart still reaping can't start a run that outlives the app.
+    /// shortcut: never cleared, so if Windows' installer fails to launch after `on_before_exit`, no script starts
+    /// until ScriptDec is reopened; clear it on that error if it comes up.
+    quitting: bool,
 }
 
 pub struct Sessions {
@@ -120,17 +145,21 @@ impl Sessions {
             return Err(format!("Folder not found: {}", spec.cwd));
         }
         let mut inner = self.inner.lock().unwrap();
+        if inner.quitting {
+            return Err("ScriptDec is quitting".into());
+        }
         let existing = inner
             .sessions
             .iter()
             .find(|(_, s)| s.spec.project_id == spec.project_id && s.spec.command == spec.command)
-            .map(|(id, s)| (*id, s.status, s.run));
-        let (id, run) = match existing {
-            Some((id, Status::Running | Status::Stopping, _)) => return Ok(id),
-            Some((id, _, run)) => (id, run + 1),
+            .map(|(id, s)| (*id, s.status, s.run, s.restart_in));
+        let (id, run, waited) = match existing {
+            Some((id, Status::Running | Status::Stopping, ..)) => return Ok(id),
+            // The wait of a pending restart carries over, so another quick crash waits longer.
+            Some((id, _, run, waited)) => (id, run + 1, waited),
             None => {
                 inner.next_id += 1;
-                (inner.next_id, 0)
+                (inner.next_id, 0, None)
             }
         };
 
@@ -144,20 +173,27 @@ impl Sessions {
         let pid = child.process_id().unwrap_or(0);
 
         let pty = Some(Pty { master: pair.master, writer });
+        // A restart starts from a clean screen, except after a crash: its output is why you'd look.
+        let scrollback = match waited {
+            Some(_) => inner.sessions.get_mut(&id).map(|s| std::mem::take(&mut s.scrollback)).unwrap_or_default(),
+            None => vec![],
+        };
         let session = Session {
             spec,
             status: Status::Running,
             code: None,
             url: None,
+            busy_port: None,
             pid,
             run,
-            scrollback: vec![],
+            scrollback,
             pty,
             interrupted: false,
+            restart_in: None,
         };
         inner.sessions.insert(id, session);
-        if let Some((_, sink)) = inner.sink.as_ref().filter(|(sink_id, _)| *sink_id == id) {
-            sink(b"\x1bc"); // a restart starts from a clean screen
+        if let Some((_, sink)) = inner.sink.as_ref().filter(|(sink_id, _)| *sink_id == id && waited.is_none()) {
+            sink(b"\x1bc");
         }
         drop(inner);
 
@@ -165,20 +201,37 @@ impl Sessions {
         thread::spawn(move || this.pump(id, run, reader));
         let this = self.clone();
         thread::spawn(move || {
+            let started = Instant::now();
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
             let mut inner = this.inner.lock().unwrap();
-            let mut failed = None;
+            let (mut failed, mut restart) = (None, None);
             if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
                 let stopped = s.status == Status::Stopping || s.interrupted;
                 s.status = if stopped { Status::Stopped } else { Status::Exited };
                 s.code = code;
                 s.pty = None; // hangs up anything left behind in the terminal
-                failed = (!stopped && code.is_some_and(|c| c != 0)).then(|| s.view(id));
+                let crashed = !stopped && code.is_some_and(|c| c != 0);
+                if crashed && s.spec.keep_alive {
+                    s.restart_in = backoff(waited, started.elapsed());
+                }
+                // A keep-alive script says once that it's restarting, and once more if it gives up.
+                failed = (crashed && s.restart_in.is_none_or(|wait| wait == 1)).then(|| s.view(id));
+                restart = s.restart_in.map(|wait| (wait, s.spec.clone()));
             }
             drop(inner);
             (this.on_change)();
             if let Some(session) = failed {
                 (this.on_failure)(&session);
+            }
+            let Some((wait, spec)) = restart else { return };
+            thread::sleep(BACKOFF_STEP * wait);
+            // Stop, Ctrl-C, Dismiss and Quit take the restart back; a start by hand meanwhile made a newer run.
+            // shortcut: one landing between this check and start() is missed; check inside start() if that ever bites.
+            let inner = this.inner.lock().unwrap();
+            let due = inner.sessions.get(&id).is_some_and(|s| s.run == run && s.restart_in.is_some());
+            drop(inner);
+            if due && this.start(spec).is_err() {
+                this.stop(id); // e.g. its folder is gone: show it failed, not restarting forever
             }
         });
         (self.on_change)();
@@ -206,8 +259,13 @@ impl Sessions {
                 s.url = find_url(chunk);
                 s.url.is_some()
             };
+            // Unix only: naming the port's owner needs lsof.
+            let found_port = cfg!(unix) && s.busy_port.is_none() && {
+                s.busy_port = find_busy_port(chunk);
+                s.busy_port.is_some()
+            };
             drop(inner);
-            if found_url {
+            if found_url || found_port {
                 (self.on_change)();
             }
         }
@@ -259,6 +317,11 @@ impl Sessions {
     }
 
     pub fn stop(self: &Arc<Self>, id: u32) {
+        // A crashed script waiting to restart stays down.
+        let waiting = self.inner.lock().unwrap().sessions.get_mut(&id).and_then(|s| s.restart_in.take());
+        if waiting.is_some() {
+            (self.on_change)();
+        }
         if let Some((pid, run)) = self.interrupt(id) {
             let this = self.clone();
             thread::spawn(move || this.reap(id, run, pid));
@@ -289,6 +352,42 @@ impl Sessions {
         }
     }
 
+    /// What listens on `port`, and the live script whose process tree it's in, if any.
+    pub fn port_owner(&self, port: u16) -> Option<PortOwner> {
+        let (pid, command) = listener(port)?;
+        let table = process_table();
+        let inner = self.inner.lock().unwrap();
+        let session = inner
+            .sessions
+            .iter()
+            .filter(|(_, s)| matches!(s.status, Status::Running | Status::Stopping))
+            .find(|(_, s)| descendants(&table, s.pid).contains(&pid))
+            .map(|(id, s)| s.view(*id));
+        Some(PortOwner { pid, command, session })
+    }
+
+    /// Stops what listens on `port`, if that's still `pid`: one of our scripts the normal way, anything
+    /// else with SIGTERM to its tree, then SIGKILL after 2 s. Returns once the port is free.
+    pub fn free_port(&self, port: u16, pid: u32) -> Result<(), String> {
+        let Some(owner) = self.port_owner(port) else { return Ok(()) };
+        if owner.pid != pid {
+            (self.on_change)(); // the windows name the old owner, so have them look again
+            return Err(format!("Port {port} is now in use by {} (pid {})", owner.command, owner.pid));
+        }
+        if let Some(session) = owner.session {
+            if let Some((root, run)) = self.interrupt(session.id) {
+                self.reap(session.id, run, root);
+            }
+            return Ok(());
+        }
+        kill_tree(pid, Signal::Term);
+        if !wait_free(port, pid, Duration::from_secs(2)) {
+            kill_tree(pid, Signal::Kill);
+            wait_free(port, pid, Duration::from_secs(1));
+        }
+        Ok(())
+    }
+
     /// Forgets a finished session.
     pub fn clear(&self, id: u32) {
         let mut inner = self.inner.lock().unwrap();
@@ -314,12 +413,19 @@ impl Sessions {
 
     pub fn send_input(&self, id: u32, data: &[u8]) {
         let mut inner = self.inner.lock().unwrap();
+        let mut cancelled = false;
         if let Some(s) = inner.sessions.get_mut(&id) {
             s.interrupted |= data.contains(&3);
+            // Ctrl-C while a crashed script waits to restart keeps it down, like Stop.
+            cancelled = data.contains(&3) && s.restart_in.take().is_some();
             if let Some(pty) = s.pty.as_mut() {
                 let _ = pty.writer.write_all(data);
                 let _ = pty.writer.flush();
             }
+        }
+        drop(inner);
+        if cancelled {
+            (self.on_change)();
         }
     }
 
@@ -334,6 +440,8 @@ impl Sessions {
     pub fn shutdown(&self) {
         let targets: Vec<_> = {
             let mut inner = self.inner.lock().unwrap();
+            inner.quitting = true;
+            inner.sessions.values_mut().for_each(|s| s.restart_in = None); // a restart now would outlive the app
             let alive = inner.sessions.iter_mut().filter(|(_, s)| s.pty.is_some());
             alive
                 .map(|(id, s)| {
@@ -351,6 +459,16 @@ impl Sessions {
             }
         }
     }
+}
+
+/// Steps to wait before restarting a crashed keep-alive script: 1, 2, 4, 8, then 16.
+/// A run of a minute or more starts over; None gives up, after five restarts that crashed quickly.
+fn backoff(waited: Option<u32>, ran: Duration) -> Option<u32> {
+    let wait = match waited {
+        Some(wait) if ran < Duration::from_secs(60) => wait * 2,
+        _ => 1,
+    };
+    (wait <= 16).then_some(wait)
 }
 
 fn shell_command(spec: &Spec) -> CommandBuilder {
@@ -403,21 +521,25 @@ fn descendants(table: &[(u32, u32)], root: u32) -> Vec<u32> {
     tree
 }
 
-#[cfg(unix)]
-fn kill_tree(root: u32, signal: Signal) {
-    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output() else { return };
-    let table: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
+/// Every process as (pid, ppid).
+fn process_table() -> Vec<(u32, u32)> {
+    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output() else { return vec![] };
+    String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|line| {
             let mut parts = line.split_whitespace().map(|p| p.parse().ok());
             Some((parts.next()??, parts.next()??))
         })
-        .collect();
+        .collect()
+}
+
+#[cfg(unix)]
+fn kill_tree(root: u32, signal: Signal) {
     let signal = match signal {
         Signal::Term => libc::SIGTERM,
         Signal::Kill => libc::SIGKILL,
     };
-    for pid in descendants(&table, root) {
+    for pid in descendants(&process_table(), root) {
         unsafe { libc::kill(pid as i32, signal) };
     }
 }
@@ -430,6 +552,33 @@ fn kill_tree(root: u32, _signal: Signal) {
         .args(["/T", "/F", "/PID", &root.to_string()])
         .creation_flags(CREATE_NO_WINDOW)
         .status();
+}
+
+/// The process listening on a TCP port, as (pid, command). Unix only: lsof.
+fn listener(port: u16) -> Option<(u32, String)> {
+    let filter = format!("-iTCP:{port}");
+    let out = Command::new("lsof").args(["-nP", &filter, "-sTCP:LISTEN", "-Fpc"]).output().ok()?;
+    parse_lsof(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `lsof -F` prints a field per line: `p` and the pid, then `c` and its command. The first process wins.
+fn parse_lsof(out: &str) -> Option<(u32, String)> {
+    let mut lines = out.lines();
+    let pid = lines.next()?.strip_prefix('p')?.parse().ok()?;
+    let command = lines.next()?.strip_prefix('c')?;
+    Some((pid, command.to_string()))
+}
+
+/// Waits for `pid` to let go of `port`.
+fn wait_free(port: u16, pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while listener(port).is_some_and(|(holder, _)| holder == pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    true
 }
 
 fn strip_ansi(bytes: &[u8]) -> Vec<u8> {
@@ -474,9 +623,27 @@ fn find_url(chunk: &[u8]) -> Option<String> {
         .map(|(_, url)| url)
 }
 
+/// The port a script couldn't listen on. Servers that move to the next port say "is in use"
+/// (Vite, Next.js), so only "already" counts.
+/// shortcut: scans one read at a time, like find_url.
+fn find_busy_port(chunk: &[u8]) -> Option<u16> {
+    let text = String::from_utf8_lossy(&strip_ansi(chunk)).to_lowercase();
+    let mut lines = text.lines().filter(|line| line.contains("already in use") || line.contains("already running on port"));
+    lines.find_map(|line| {
+        // `port 3000` (Vite, Create React App, Puma), else the end of Node's `address already in use :::3000`
+        let rest = match line.find("port ") {
+            Some(at) => &line[at + 5..],
+            None => line.split("in use ").nth(1)?.split_whitespace().next()?.rsplit(':').next()?,
+        };
+        rest.chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -489,6 +656,7 @@ mod tests {
             command: command.into(),
             cwd: std::env::temp_dir().to_string_lossy().into(),
             node_bin: None,
+            keep_alive: false,
         }
     }
 
@@ -545,17 +713,20 @@ mod tests {
 
         let typed = sessions.start(spec("echo ready; sleep 30")).unwrap();
         wait_for("ready", || output(&sessions, typed).contains("ready"));
-        sessions.send_input(typed, b"\x03");
-        wait_for("typed Ctrl-C", || view(&sessions, typed).status == Status::Stopped);
+        // The shell can drop a Ctrl-C that lands before `sleep` has started, so type it until one lands, as a person would.
+        wait_for("typed Ctrl-C", || {
+            sessions.send_input(typed, b"\x03");
+            view(&sessions, typed).status == Status::Stopped
+        });
 
-        let quit = sessions.start(spec("echo ready; sleep 30")).unwrap();
+        let quit = sessions.start(spec("echo ready; sleep 60")).unwrap();
         wait_for("ready", || output(&sessions, quit).contains("ready"));
-        sessions.shutdown();
-        wait_for("quit", || view(&sessions, quit).status == Status::Stopped);
 
         assert!(failures.lock().unwrap().is_empty());
         sessions.start(Spec { label: "boom".into(), ..spec("exit 7") }).unwrap();
         wait_for("failure", || !failures.lock().unwrap().is_empty());
+        sessions.shutdown(); // last, since nothing starts once quitting
+        wait_for("quit", || view(&sessions, quit).status == Status::Stopped);
         assert_eq!(*failures.lock().unwrap(), [("boom".to_string(), Some(7))]);
     }
 
@@ -616,6 +787,66 @@ mod tests {
         wait_for("stop", || view(&sessions, id).status == Status::Stopped);
     }
 
+    /// Sessions that run `then` on each failure notice; a keep-alive script's first comes while its restart waits.
+    fn with_notice(then: impl Fn(&Arc<Sessions>, &SessionView) + Send + Sync + 'static) -> Arc<Sessions> {
+        let slot = Arc::new(std::sync::OnceLock::<Arc<Sessions>>::new());
+        let handle = slot.clone();
+        let sessions = Sessions::new(Box::new(|| {}), Box::new(move |s: &SessionView| then(handle.get().unwrap(), s)));
+        let _ = slot.set(sessions.clone());
+        sessions
+    }
+
+    #[test]
+    fn a_keep_alive_crash_restarts_in_the_same_session_until_it_gives_up() {
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let seen = notices.clone();
+        let sessions = with_notice(move |sessions, s| {
+            seen.lock().unwrap().push(s.restart_in);
+            if s.restart_in.is_some() {
+                wait_for("first run's output", || output(sessions, s.id).contains("boom"));
+                // Skip to the last wait, so the next quick crash gives up without four more login shells.
+                sessions.inner.lock().unwrap().sessions.get_mut(&s.id).unwrap().restart_in = Some(16);
+            }
+        });
+        let id = sessions.start(Spec { keep_alive: true, ..spec("echo boom; exit 1") }).unwrap();
+        // One wait per run: a login shell can take 15 s on a busy machine.
+        wait_for("first crash", || !notices.lock().unwrap().is_empty());
+        wait_for("giving up", || notices.lock().unwrap().len() == 2);
+        assert_eq!(*notices.lock().unwrap(), [Some(1), None]);
+        let run = sessions.inner.lock().unwrap().sessions[&id].run;
+        assert_eq!((run, sessions.list().len()), (1, 1));
+        wait_for("both runs' output", || output(&sessions, id).matches("boom").count() == 2);
+    }
+
+    #[test]
+    fn stop_ctrl_c_dismiss_or_quit_during_the_wait_cancels_the_restart() {
+        let cancels: [fn(&Arc<Sessions>, u32); 4] =
+            [|s, id| s.stop(id), |s, id| s.send_input(id, b"\x03"), |s, id| s.clear(id), |s, _| s.shutdown()];
+        let all: Vec<_> = cancels
+            .into_iter()
+            .map(|cancel| {
+                let sessions = with_notice(move |sessions, s| cancel(sessions, s.id));
+                let id = sessions.start(Spec { keep_alive: true, ..spec("exit 1") }).unwrap();
+                (sessions, id)
+            })
+            .collect();
+        for (sessions, _) in &all {
+            wait_for("cancel", || sessions.list().iter().all(|s| s.status == Status::Exited && s.restart_in.is_none()));
+        }
+        thread::sleep(BACKOFF_STEP * 20); // long past the first wait
+        for (sessions, id) in &all {
+            assert!(sessions.inner.lock().unwrap().sessions.iter().all(|(other, s)| other == id && s.run == 0));
+        }
+    }
+
+    #[test]
+    fn backs_off_up_to_16_steps_and_starts_over_after_a_long_run() {
+        let quick = Duration::from_secs(5);
+        let waits: Vec<_> = std::iter::successors(backoff(None, quick), |&wait| backoff(Some(wait), quick)).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16]);
+        assert_eq!(backoff(Some(16), Duration::from_secs(60)), Some(1));
+    }
+
     #[test]
     fn attach_replays_scrollback_then_streams() {
         let sessions = new_sessions();
@@ -670,6 +901,18 @@ mod tests {
     }
 
     #[test]
+    fn quitting_during_a_restart_starts_no_new_run() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("trap '' INT; echo child=$$; while true; do sleep 1; done")).unwrap();
+        let shell = printed_pid(&sessions, id, "child=");
+        sessions.restart(id).unwrap(); // Ctrl-C is ignored, so the restart waits on its reap
+        sessions.shutdown();
+        wait_for("shell gone", || !pid_alive(shell));
+        thread::sleep(Duration::from_secs(1)); // the reap polls every 50 ms, then would start the new run
+        assert_eq!(view(&sessions, id).status, Status::Stopped);
+    }
+
+    #[test]
     fn finds_dev_server_urls() {
         let url = |s: &str| find_url(s.as_bytes());
         assert_eq!(url("ready on http://localhost:3000"), Some("http://localhost:3000".into()));
@@ -686,8 +929,81 @@ mod tests {
     }
 
     #[test]
+    fn finds_the_port_a_script_could_not_take() {
+        let port = |s: &str| find_busy_port(s.as_bytes());
+        assert_eq!(port("Error: listen EADDRINUSE: address already in use :::3000"), Some(3000));
+        assert_eq!(port("Port 5173 is already in use"), Some(5173));
+        assert_eq!(port("\x1b[33mSomething is already running on port 3000.\x1b[39m"), Some(3000));
+        assert_eq!(port("Address already in use - bind(2) for \"127.0.0.1\" port 3000"), Some(3000));
+        // These move to the next free port on their own.
+        assert_eq!(port("Port 5173 is in use, trying another one..."), None);
+        assert_eq!(port("Port 3000 is in use by process 123, using available port 3001 instead."), None);
+    }
+
+    #[test]
+    fn notes_the_port_a_script_could_not_take() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("echo 'Port 5173 is already in use'; exit 1")).unwrap();
+        wait_for("busy port", || view(&sessions, id).busy_port == Some(5173));
+    }
+
+    #[test]
     fn walks_the_whole_process_tree() {
         let table = [(2, 1), (3, 2), (4, 3), (9, 8)];
         assert_eq!(descendants(&table, 1), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn reads_the_listener_from_lsof() {
+        assert_eq!(parse_lsof("p39855\ncnode\nf12\n"), Some((39855, "node".into())));
+        assert_eq!(parse_lsof("p100\ncruby\nf9\np101\ncruby\nf9\n"), Some((100, "ruby".into())));
+        assert_eq!(parse_lsof(""), None);
+    }
+
+    /// Listens on a port the OS picks, since other tests run at the same time, and gives up after a minute.
+    const LISTENER: &str = r#"node -e 'require("net").createServer().listen(0, "127.0.0.1", function () { console.log("port=" + this.address().port) }); setTimeout(process.exit, 60000)'"#;
+
+    /// Runs a listener outside ScriptDec, and returns it with its port.
+    fn listen_outside(listener: &str) -> (std::process::Child, u16) {
+        let shell = Command::new("sh").args(["-c", &format!("exec {listener}")]).stdout(Stdio::piped()).spawn();
+        let mut child = shell.unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        (child, line.trim().trim_start_matches("port=").parse().unwrap())
+    }
+
+    #[test]
+    fn frees_a_port_held_outside_scriptdec() {
+        let (mut child, port) = listen_outside(LISTENER);
+        let sessions = new_sessions();
+        let owner = sessions.port_owner(port).unwrap();
+        assert_eq!((owner.pid, owner.command.as_str()), (child.id(), "node"));
+        assert!(owner.session.is_none());
+        assert!(sessions.free_port(port, owner.pid + 1).is_err(), "only the pid the user saw");
+        sessions.free_port(port, owner.pid).unwrap();
+        assert!(sessions.port_owner(port).is_none());
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_holder_that_ignores_sigterm_gets_sigkill_after_2_s() {
+        use std::os::unix::process::ExitStatusExt;
+        let stubborn = LISTENER.replace("setTimeout", r#"process.on("SIGTERM", () => {}); setTimeout"#);
+        let (mut child, port) = listen_outside(&stubborn);
+        let started = Instant::now();
+        new_sessions().free_port(port, child.id()).unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(2), "SIGTERM gets its 2 s first");
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn a_port_held_by_a_script_is_freed_with_a_normal_stop() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec(LISTENER)).unwrap();
+        let port = printed_pid(&sessions, id, "port=") as u16;
+        let owner = sessions.port_owner(port).unwrap();
+        assert_eq!(owner.session.map(|s| s.id), Some(id));
+        sessions.free_port(port, owner.pid).unwrap();
+        assert_eq!(view(&sessions, id).status, Status::Stopped);
     }
 }
