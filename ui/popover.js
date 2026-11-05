@@ -55,13 +55,25 @@ function urlChip(session) {
   }, urlLabel(session.url));
 }
 
+let tickers = []; // one per live row on screen, redrawing its running time
+
 function sessionRow(session) {
   const live = isLive(session);
+  const dot = h('span', { class: `dot ${dotClass(session)}` });
+  const sub = h('div', { class: 'sub' });
+  // A tick only sets text: rebuilding the row every second would drop clicks and keyboard focus.
+  const showStatus = () => {
+    const status = statusText(session);
+    dot.title = status;
+    sub.textContent = `${session.project} · ${status}`;
+  };
+  showStatus();
+  if (live) tickers.push(showStatus);
   return h('div', { class: 'row', onClick: () => openTerminal(session.id) },
-    h('span', { class: `dot ${dotClass(session)}`, title: statusText(session) }),
+    dot,
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, session.label),
-      h('div', { class: 'sub' }, `${session.project} · ${statusText(session)}`)),
+      sub),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
     live
@@ -123,6 +135,7 @@ function searchResults() {
 
 function render() {
   const scroll = list.scrollTop;
+  tickers = [];
   if (!projects.length) {
     list.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'No projects yet.'),
@@ -173,4 +186,11 @@ async function refresh() {
 
 listen('sessions-changed', loadSessions);
 window.addEventListener('focus', () => { search.focus(); search.select(); refresh(); });
+// Times tick only while the window is shown: it hides on blur, and WebKit throttles timers in hidden windows.
+let ticker;
+window.addEventListener('focus', () => {
+  clearInterval(ticker);
+  ticker = setInterval(() => tickers.forEach((tick) => tick()), 1000);
+});
+window.addEventListener('blur', () => clearInterval(ticker));
 refresh();

@@ -7,7 +7,7 @@ use std::{
     process::Command,
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const SCROLLBACK: usize = 1 << 20;
@@ -44,6 +44,9 @@ pub struct SessionView {
     pub command: String,
     pub status: Status,
     pub code: Option<i32>,
+    /// When the current run started and ended, in milliseconds since the epoch.
+    pub started_at: u64,
+    pub ended_at: Option<u64>,
     pub url: Option<String>,
 }
 
@@ -60,6 +63,8 @@ struct Session {
     pid: u32,
     /// Bumped on restart so the old process's threads can't touch the new run.
     run: u32,
+    started_at: u64,
+    ended_at: Option<u64>,
     scrollback: Vec<u8>,
     pty: Option<Pty>,
     /// Ctrl-C was typed in the terminal, so ending now is the user's doing, not a crash.
@@ -76,9 +81,15 @@ impl Session {
             command: self.spec.command.clone(),
             status: self.status,
             code: self.code,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
             url: self.url.clone(),
         }
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
 type Sink = Box<dyn Fn(&[u8]) + Send>;
@@ -151,6 +162,8 @@ impl Sessions {
             url: None,
             pid,
             run,
+            started_at: now_ms(),
+            ended_at: None,
             scrollback: vec![],
             pty,
             interrupted: false,
@@ -172,6 +185,7 @@ impl Sessions {
                 let stopped = s.status == Status::Stopping || s.interrupted;
                 s.status = if stopped { Status::Stopped } else { Status::Exited };
                 s.code = code;
+                s.ended_at = Some(now_ms());
                 s.pty = None; // hangs up anything left behind in the terminal
                 failed = (!stopped && code.is_some_and(|c| c != 0)).then(|| s.view(id));
             }
@@ -605,6 +619,7 @@ mod tests {
         let sessions = new_sessions();
         let id = sessions.start(spec("echo run=$$; sleep 60")).unwrap();
         let first = printed_pid(&sessions, id, "run=");
+        let started = view(&sessions, id).started_at;
         sessions.restart(id).unwrap();
         wait_for("second run", || {
             view(&sessions, id).status == Status::Running
@@ -612,6 +627,8 @@ mod tests {
                 && printed_pid(&sessions, id, "run=") != first
         });
         assert_eq!(output(&sessions, id).matches("run=").count(), 1);
+        let second = view(&sessions, id);
+        assert!(second.started_at > started && second.ended_at.is_none());
         sessions.stop(id);
         wait_for("stop", || view(&sessions, id).status == Status::Stopped);
     }

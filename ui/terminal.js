@@ -65,12 +65,16 @@ async function select(id) {
   term.focus();
 }
 
+const tabTitle = (session) => `${session.project}: ${session.command} (${statusText(session)})`;
+
 function render() {
   tabs.replaceChildren(...sessions.map((session) => h('button', {
     class: `tab ${session.id === active ? 'active' : ''}`,
     role: 'tab',
     'aria-selected': String(session.id === active),
-    title: `${session.project}: ${session.command} (${statusText(session)})`,
+    title: tabTitle(session),
+    // A running time moves on, so the tooltip is redone each time it's about to show.
+    onMouseenter: (event) => { event.currentTarget.title = tabTitle(session); },
     onClick: () => select(session.id),
   }, h('span', { class: `dot ${dotClass(session)}` }), session.label)));
 

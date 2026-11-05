@@ -60,9 +60,19 @@ export const call = (command, args) => invoke(command, args).catch((error) => { 
 
 export const isLive = (session) => session.status === 'running' || session.status === 'stopping';
 
+/** 48s, 2m 3s, 1h 5m: the same as the long-task notification. */
+function duration(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`;
+}
+
 export function statusText(session) {
-  if (session.status === 'exited') return session.code === 0 ? 'finished' : `failed (exit ${session.code})`;
-  return session.status;
+  const took = duration((session.endedAt ?? Date.now()) - session.startedAt);
+  if (session.status === 'running') return `running · ${took}`;
+  if (session.status !== 'exited') return session.status;
+  return session.code === 0 ? `finished in ${took}` : `failed after ${took} (exit ${session.code})`;
 }
 
 export function dotClass(session) {
