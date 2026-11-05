@@ -22,13 +22,18 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 
 - **Every script, one click away.** Root scripts, every workspace package's scripts (`pnpm -F @acme/app run start`, and the yarn, npm and bun equivalents), and your own commands.
 - **Leave them running.** Each script has its own terminal. Open it from the menu bar, type into it, restart or stop it. Quitting ScriptDec stops every script it started.
+- **Reopen after a restart.** Turn on Reopen running scripts, and the scripts still running when you quit, log out or update start again with ScriptDec. Ones you stopped stay stopped.
+- **Find in the output.** Cmd+F (Ctrl+F on Windows) searches a terminal's whole scrollback. Cmd+click (Ctrl+click) opens any web link a script prints.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
 - **Run with arguments.** Option-click a script's Run button (Alt-click on Windows), or press Shift+Enter on a search result, then type `--watch` or `--port 3001`. ScriptDec adds the `--` npm needs, runs it in its own terminal and remembers the arguments for next time. Save as custom script keeps the whole command.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
+- **Groups.** Start the scripts you always run together, say web, api and a worker, with one click, and stop them the same way. Each still gets its own terminal.
 - **Dev server links.** The port a script prints becomes a one-click link.
+- **Port already in use.** When a script can't start because its port is taken, its row names what holds it, another script or a leftover process, and Free port stops that and restarts yours. macOS only.
 - **Node per project.** Follows `.nvmrc`, `.node-version` or a Volta pin (including up the tree), or pick any version installed with nvm, fnm or Volta. Missing versions get an install button.
 - **Edit `package.json` scripts.** Add, change, rename or delete them, for the root or any workspace package. Key order, indentation and line endings stay as they were.
 - **Crash notifications.** A system notification when a script fails on its own. Stopping one yourself doesn't count, and neither does a failure you're watching in the terminal window.
+- **Restart on crash.** Switch it on per script in Settings, and a script that dies on its own comes back after 1 s, then 2, 4, 8 and 16 s. If all five restarts crash within a minute of starting, it stays down. You get one notification as it starts restarting and one if it gives up. Stopping it yourself never restarts it.
 - **Toolkit.** Install, outdated, update, audit and clean reinstall, for pnpm, yarn, npm and bun.
 
 ## Settings
@@ -40,8 +45,8 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
   <img src="docs/settings-light.png" width="860" alt="The Settings window: a project's Node version, toolkit, custom scripts and package.json scripts">
 </picture>
 
-- **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands and `package.json` scripts.
-- **General.** Launch at login, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
+- **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands, groups and `package.json` scripts.
+- **General.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
 
 ## Install
 

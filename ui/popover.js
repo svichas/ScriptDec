@@ -1,6 +1,6 @@
 import {
-  call, dotClass, h, icon, iconButton, invoke, isLive, listen, nodeLabel, runScript, saveProject, scriptLabel,
-  scriptsOf, statusText, togglePin, urlLabel, withArgs,
+  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel,
+  portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel, withArgs,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -11,6 +11,9 @@ let sessions = [];
 let query = '';
 let cursor = 0;
 let results = [];
+let owners = new Map(); // session id → what holds its busy port
+let confirming = null; // the Free port button waiting for its second click
+const arm = (key) => { confirming = key; render(); };
 
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
@@ -111,9 +114,15 @@ function sessionRow(session) {
       h('div', { class: 'sub' }, `${session.project} · ${statusText(session)}`)),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
-    live
+    live || session.restartIn // stopping a pending restart cancels it
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
       : iconButton('close', 'Dismiss', () => call('clear_session', { id: session.id })));
+}
+
+function portNotice(session) {
+  const owner = owners.get(session.id);
+  return session.busyPort && h('div', { class: 'hint inline port' },
+    h('span', { class: 'warn' }, portText(session, owner)), freePortButton(session, owner, confirming, arm));
 }
 
 function scriptRow(project, script, showProject, selected) {
@@ -136,6 +145,39 @@ function scriptRow(project, script, showProject, selected) {
   return argsFor && argsKey(...argsFor) === argsKey(project, script) ? [row, argsField] : row;
 }
 
+/** The running sessions of a group's scripts, and the scripts that aren't running. */
+function groupState(project, group) {
+  const { scripts, missing } = groupScripts(project, group);
+  const live = [];
+  const idle = [];
+  for (const script of scripts) {
+    const session = sessionFor(project, script);
+    if (session && isLive(session)) live.push(session);
+    else idle.push(script);
+  }
+  return { scripts, missing, live, idle };
+}
+
+/** Starts what isn't running; when it all is, shows the first terminal, as act() does for one script. */
+function startGroup(project, group) {
+  const { live, idle } = groupState(project, group);
+  if (!idle.length && live.length) return openTerminal(live[0].id);
+  idle.forEach((script) => runScript(project, script));
+}
+
+function groupRow(project, group, showProject, selected) {
+  const { scripts, missing, live, idle } = groupState(project, group);
+  const names = [...scripts.map(scriptLabel), ...missing.map(missingLabel)].join(', ');
+  const sub = [showProject && project.name, `${live.length} of ${scripts.length} running`, names];
+  return h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => startGroup(project, group) },
+    h('span', { class: `dot ${!live.length ? '' : idle.length ? 'some' : 'on'}` }),
+    h('div', { class: 'meta' },
+      h('div', { class: 'title' }, group.name),
+      h('div', { class: 'sub', title: names }, sub.filter(Boolean).join(' · '))),
+    live.length > 0 && iconButton('stop', 'Stop group', () => live.forEach((s) => call('stop', { id: s.id })), 'danger'),
+    idle.length > 0 && iconButton('play', 'Run group', () => startGroup(project, group), 'go'));
+}
+
 function projectBlock(project) {
   const open = !collapsed.has(project.id);
   const all = scriptsOf(project);
@@ -149,21 +191,23 @@ function projectBlock(project) {
       h('span', { class: 'name' }, project.name),
       h('span', { class: `info ${node.wanted && !node.resolved ? 'warn' : ''}` }, error ? '' : `${pm} · ${nodeLabel(node)}`)),
     open && error && h('div', { class: 'hint warn' }, error),
+    open && project.groups.map((group) => groupRow(project, group, false, false)),
     open && shown.map((script) => scriptRow(project, script, false, false)),
     open && hidden > 0 && h('div', { class: 'hint' }, `${hidden} more scripts, search to find them`),
   ];
 }
 
 function matches(project, script, terms) {
-  const text = `${project.name} ${script.package ?? ''} ${script.name} ${script.command}`.toLowerCase();
+  const text = `${project.name} ${script.package ?? ''} ${script.name} ${script.command ?? ''}`.toLowerCase();
   return terms.every((term) => text.includes(term));
 }
 
 function searchResults() {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const pinnedFirst = ([p, s]) => (s.custom || p.pinned.includes(s.key) ? 0 : 1);
+  // A group, told apart by its list of scripts, ranks with the pinned scripts and ahead of its project's.
+  const pinnedFirst = ([p, s]) => (s.scripts || s.custom || p.pinned.includes(s.key) ? 0 : 1);
   return projects
-    .flatMap((project) => scriptsOf(project).map((script) => [project, script]))
+    .flatMap((project) => [...project.groups, ...scriptsOf(project)].map((item) => [project, item]))
     .filter(([project, script]) => matches(project, script, terms))
     .sort((a, b) => pinnedFirst(a) - pinnedFirst(b))
     .slice(0, MAX_RESULTS);
@@ -183,7 +227,8 @@ function render() {
     results = searchResults();
     cursor = Math.min(cursor, Math.max(results.length - 1, 0));
     list.replaceChildren(...(results.length
-      ? results.flatMap(([project, script], i) => scriptRow(project, script, projects.length > 1, i === cursor))
+      ? results.flatMap(([project, item], i) => (item.scripts ? groupRow : scriptRow)(
+        project, item, projects.length > 1, i === cursor))
       : [h('div', { class: 'empty' }, 'No matching scripts.')]));
     return;
   }
@@ -192,7 +237,7 @@ function render() {
     sessions.length > 0 && h('div', { class: 'group-title' },
       h('span', { class: 'grow' }, `Scripts (${sessions.filter(isLive).length} running)`),
       live && h('button', { class: 'link', onClick: () => call('stop_all') }, 'Stop all')),
-    sessions.map(sessionRow),
+    sessions.map((session) => [sessionRow(session), portNotice(session)]),
     projects.map(projectBlock),
   ].flat(Infinity).filter(Boolean));
   list.scrollTop = scroll;
@@ -207,13 +252,18 @@ function onSearchKey(event) {
     render();
     list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
   } else if (event.key === 'Enter' && query.trim() && results[cursor]) {
-    if (event.shiftKey) openArgs(...results[cursor]); else act(...results[cursor]);
+    const [project, item] = results[cursor];
+    if (item.scripts) startGroup(project, item); // a group has no arguments field
+    else if (event.shiftKey) openArgs(project, item);
+    else act(project, item);
   }
 }
 
 async function loadSessions() {
   sessions = await invoke('list_sessions');
   render();
+  owners = await portOwners(sessions); // lsof can take a moment, so this fills in after
+  if (owners.size) render();
 }
 
 async function refresh() {

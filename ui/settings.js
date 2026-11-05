@@ -1,5 +1,6 @@
 import {
-  call, h, icon, iconButton, invoke, listen, MAC, runScript, saveProject, shortPackage, togglePin,
+  call, groupScripts, h, icon, iconButton, invoke, listen, MAC, missingLabel, runScript, saveProject, scriptLabel,
+  scriptsOf, shortPackage, togglePin,
 } from './shared.js';
 import { checkForUpdates, updateBanner } from './update.js';
 
@@ -162,7 +163,9 @@ function renderGeneral() {
   head.replaceChildren(h('h1', {}, 'General'));
   body.replaceChildren(
     group('Startup',
-      switchSetting('Launch at login', 'ScriptDec starts in the menu bar.', launchAtLogin, setLaunchAtLogin)),
+      switchSetting('Launch at login', 'ScriptDec starts in the menu bar.', launchAtLogin, setLaunchAtLogin),
+      switchSetting('Reopen running scripts', 'Starts the scripts that were still running when ScriptDec quit.',
+        settings.reopenScripts, (reopenScripts) => saveSettings({ reopenScripts }))),
     group('Keyboard',
       setting('Open ScriptDec', 'Shows the menu bar window from any app.', shortcutField())),
     group('Notifications',
@@ -224,6 +227,18 @@ function toolkitSection(project) {
       : h('button', { class: 'btn', title: tool.command, onClick: () => run(tool) }, tool.label)))));
 }
 
+const customKey = (script) => `custom:${script.id}`; // the key scriptsOf gives it
+
+/** Takes effect from the script's next start. */
+const keepAliveSwitch = (project, key) => h('input', {
+  type: 'checkbox', class: 'switch', role: 'switch', checked: project.keepAlive.includes(key),
+  title: 'Restart if it crashes', 'aria-label': 'Restart if it crashes',
+  onChange: (event) => {
+    project.keepAlive = project.keepAlive.filter((k) => k !== key).concat(event.target.checked ? [key] : []);
+    saveProject(project);
+  },
+});
+
 function customSection(project) {
   const save = () => saveProject(project);
   const rows = project.custom.map((script) => h('div', { class: 'custom-row' },
@@ -236,9 +251,12 @@ function customSection(project) {
       onChange: (e) => { script.command = e.target.value; save(); },
     }),
     h('div', { class: 'actions' },
-      iconButton('play', 'Run', () => launch(project, script), 'go'),
+      keepAliveSwitch(project, customKey(script)),
+      iconButton('play', 'Run', () => launch(project, { ...script, key: customKey(script) }), 'go'),
       iconButton('close', 'Delete', async () => {
         project.custom = project.custom.filter((s) => s !== script);
+        project.keepAlive = project.keepAlive.filter((k) => k !== customKey(script));
+        for (const group of project.groups) group.scripts = group.scripts.filter((key) => key !== customKey(script));
         await save();
         render();
       }, 'danger'))));
@@ -259,6 +277,51 @@ function customSection(project) {
     h('h2', {}, 'Custom scripts'),
     rows,
     h('form', { class: 'add-row', onSubmit: add }, name, command, h('button', { class: 'btn' }, 'Add')));
+}
+
+function groupsSection(project) {
+  const save = () => saveProject(project);
+  const scripts = scriptsOf(project);
+  const blocks = project.groups.map((group) => {
+    const tick = (key, label, props) => h('label', props,
+      h('input', {
+        type: 'checkbox',
+        checked: group.scripts.includes(key),
+        onChange: (e) => {
+          group.scripts = e.target.checked ? [...group.scripts, key] : group.scripts.filter((k) => k !== key);
+          save();
+        },
+      }),
+      label);
+    return h('div', { class: 'group script-group' },
+      h('div', { class: 'inline' },
+        h('input', {
+          value: group.name, 'aria-label': 'Group name', placeholder: 'Name',
+          onChange: (e) => { group.name = e.target.value.trim() || group.name; e.target.value = group.name; save(); },
+        }),
+        iconButton('close', 'Delete group', async () => {
+          project.groups = project.groups.filter((g) => g !== group);
+          await save();
+          render();
+        }, 'danger')),
+      h('div', { class: 'ticks' },
+        scripts.map((s) => tick(s.key, scriptLabel(s), { title: s.command })),
+        groupScripts(project, group).missing.map((key) => tick(key, missingLabel(key), { class: 'warn' }))));
+  });
+
+  const name = h('input', { placeholder: 'Group name', 'aria-label': 'New group name' });
+  const add = async (event) => {
+    event.preventDefault();
+    if (!name.value.trim()) return name.focus();
+    project.groups.push({ id: crypto.randomUUID(), name: name.value.trim(), scripts: [] });
+    await save();
+    render();
+  };
+  return h('section', {},
+    h('h2', {}, 'Groups'),
+    blocks,
+    h('form', { class: 'inline', onSubmit: add }, name, h('button', { class: 'btn' }, 'Add')),
+    !project.groups.length && h('p', { class: 'note' }, 'Start and stop several scripts from one row in the menu bar.'));
 }
 
 function openEditor(state) {
@@ -307,6 +370,7 @@ function scriptRow(project, script) {
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, script.name),
       h('div', { class: 'sub mono', title: script.body }, script.body)),
+    keepAliveSwitch(project, script.key),
     iconButton('pencil', 'Edit script', () => openEditor({
       key: script.key, package: script.package, old: script.name, name: script.name, body: script.body,
     })),
@@ -383,7 +447,8 @@ function renderProject(project) {
       confirmButton('remove', 'Remove', 'Remove from ScriptDec?', remove)));
   body.replaceChildren(...(error
     ? [h('p', { class: 'note warn' }, error)]
-    : [nodeSection(project), toolkitSection(project), customSection(project), scriptsSection(project)]));
+    : [nodeSection(project), toolkitSection(project), customSection(project), groupsSection(project),
+      scriptsSection(project)]));
 }
 
 function navItem(id, glyph, label) {
