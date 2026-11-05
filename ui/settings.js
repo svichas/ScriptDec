@@ -1,6 +1,6 @@
 import {
-  call, groupScripts, h, icon, iconButton, invoke, listen, MAC, missingLabel, runScript, saveProject, scriptLabel,
-  scriptsOf, shortPackage, toast, togglePin,
+  call, groupScripts, h, icon, iconButton, invoke, listen, listProjects, MAC, missingLabel, runScript, saveProject,
+  scriptLabel, scriptsOf, shortPackage, toast, togglePin,
 } from './shared.js';
 import { checkForUpdates, updateBanner } from './update.js';
 
@@ -32,7 +32,7 @@ const selected = () => projects.find((p) => p.id === selectedId);
 
 async function load() {
   [projects, versions, launchAtLogin, settings, version] = await Promise.all([
-    invoke('list_projects'), invoke('node_versions'), invoke('login_item'), invoke('settings'),
+    listProjects(), invoke('node_versions'), invoke('login_item'), invoke('settings'),
     window.__TAURI__.app.getVersion(),
   ]);
   if (selectedId !== GENERAL && !selected()) selectedId = projects[0]?.id ?? null;

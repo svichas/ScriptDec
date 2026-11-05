@@ -268,6 +268,36 @@ pub fn move_in_groups(project: &mut Project, old: &str, new: Option<String>) {
     }
 }
 
+/// Saves what a window changed in its copy of a project, from `base`, the copy it loaded, to `edited`.
+/// Storing its whole copy would undo whatever another window changed after this one loaded.
+pub fn merge(stored: &mut Project, base: &Project, edited: Project) {
+    // Every field by name, so a new one won't compile until it's merged here too.
+    let Project { id: _, path: _, name, node_version, custom, pinned, keep_alive, groups } = edited;
+    if name != base.name {
+        stored.name = name;
+    }
+    if node_version != base.node_version {
+        stored.node_version = node_version;
+    }
+    merge_list(&mut stored.custom, &base.custom, custom, |script| &script.id);
+    merge_list(&mut stored.pinned, &base.pinned, pinned, |key| key);
+    merge_list(&mut stored.keep_alive, &base.keep_alive, keep_alive, |key| key);
+    merge_list(&mut stored.groups, &base.groups, groups, |group| &group.id);
+}
+
+/// What `edited` added, changed or removed since `base`, matched by `id`. Everything else stays as stored.
+fn merge_list<T: PartialEq>(stored: &mut Vec<T>, base: &[T], edited: Vec<T>, id: impl Fn(&T) -> &String) {
+    let find = |list: &[T], item: &T| list.iter().position(|other| id(other) == id(item));
+    stored.retain(|item| find(base, item).is_none() || find(&edited, item).is_some());
+    for item in edited {
+        match (find(base, &item), find(stored, &item)) {
+            (None, None) => stored.push(item),
+            (Some(was), Some(at)) if base[was] != item => stored[at] = item,
+            _ => {} // unchanged, also added by another window, or deleted by one
+        }
+    }
+}
+
 pub fn scan(project: &Project) -> Scan {
     let root = Path::new(&project.path);
     let manifest = match read_manifest(root) {
@@ -479,6 +509,45 @@ mod tests {
         move_in_groups(&mut project, ":a", None);
         let keys: Vec<_> = project.groups.into_iter().map(|g| g.scripts).collect();
         assert_eq!(keys, [vec![":c"], vec![":c", "web:b"]]);
+    }
+
+    #[test]
+    fn a_save_from_an_old_copy_keeps_what_another_window_changed() {
+        let keys = |keys: &[&str]| keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        let script = |id: &str| config::CustomScript { id: id.into(), name: id.into(), command: format!("echo {id}") };
+        let group = |id: &str| config::Group { id: id.into(), scripts: keys(&[":dev"]), ..Default::default() };
+        let loaded = Project {
+            name: "web".into(),
+            custom: vec![script("a"), script("b")],
+            pinned: keys(&[":lint"]),
+            groups: vec![group("g")],
+            ..Default::default()
+        };
+        let mut stored = loaded.clone();
+        // Both windows load that. Settings renames the project and deletes b.
+        let mut settings = loaded.clone();
+        settings.name = "Web app".into();
+        settings.custom.retain(|s| s.id != "b");
+        merge(&mut stored, &loaded, settings.clone());
+        // The menu bar, on its old copy, pins :dev, unpins :lint and saves a custom script.
+        let mut menu = loaded.clone();
+        menu.pinned = keys(&[":dev"]);
+        menu.custom.push(script("c"));
+        merge(&mut stored, &loaded, menu);
+        // Settings, on its copy from before that, renames a, has it restart on crash and adds a group.
+        let mut later = settings.clone();
+        later.custom[0].name = "renamed".into();
+        later.keep_alive = keys(&["custom:a"]);
+        later.groups.push(group("h"));
+        merge(&mut stored, &settings, later);
+
+        assert_eq!(stored.name, "Web app");
+        let names: Vec<_> = stored.custom.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["renamed", "c"]);
+        assert_eq!(stored.pinned, [":dev"]);
+        assert_eq!(stored.keep_alive, ["custom:a"]);
+        let groups: Vec<_> = stored.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(groups, ["g", "h"]);
     }
 
     #[cfg(unix)]

@@ -122,8 +122,21 @@ export function withArgs(project, script, args) {
   return { ...script, name: `${script.name} ${typed}`, command: `${script.command}${dashes} ${typed}` };
 }
 
+// This window's copy of each project as last loaded or saved, by id: a save sends its changes since then.
+const loaded = new Map();
+const remember = ({ scan, ...project }) => loaded.set(project.id, structuredClone(project));
+
+export async function listProjects() {
+  const projects = await invoke('list_projects');
+  projects.forEach(remember);
+  return projects;
+}
+
+/** Another window may have changed the project since this one loaded it, so Rust applies only this window's changes. */
 export function saveProject({ scan, ...project }) {
-  return call('update_project', { project });
+  const base = loaded.get(project.id);
+  remember(project); // now, so a second save before this one returns sends only its own change
+  return call('update_project', { base, project });
 }
 
 export function togglePin(project, script) {

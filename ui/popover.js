@@ -1,7 +1,7 @@
 import {
-  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel,
-  portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel, usageLabel,
-  withArgs,
+  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, listProjects, missingLabel,
+  nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
+  usageLabel, withArgs,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -290,7 +290,7 @@ async function loadSessions() {
 }
 
 async function refresh() {
-  projects = await invoke('list_projects');
+  projects = await listProjects();
   await loadSessions();
 }
 

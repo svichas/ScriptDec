@@ -59,7 +59,7 @@ pub struct Project {
     pub groups: Vec<Group>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CustomScript {
     pub id: String,
@@ -76,7 +76,7 @@ pub struct ReopenScript {
     pub command: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Group {
     pub id: String,
