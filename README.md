@@ -23,6 +23,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Every script, one click away.** Root scripts, every workspace package's scripts (`pnpm -F @acme/app run start`, and the yarn, npm and bun equivalents), and your own commands.
 - **Leave them running.** Each script has its own terminal. Open it from the menu bar, type into it, restart or stop it. Quitting ScriptDec stops every script it started.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
+- **Run with arguments.** Option-click a script's Run button (Alt-click on Windows), or press Shift+Enter on a search result, then type `--watch` or `--port 3001`. ScriptDec adds the `--` npm needs, runs it in its own terminal and remembers the arguments for next time. Save as custom script keeps the whole command.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
 - **Dev server links.** The port a script prints becomes a one-click link.
 - **Node per project.** Follows `.nvmrc`, `.node-version` or a Volta pin (including up the tree), or pick any version installed with nvm, fnm or Volta. Missing versions get an install button.
