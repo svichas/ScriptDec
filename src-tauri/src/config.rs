@@ -7,6 +7,8 @@ use tauri::Theme;
 pub struct Config {
     pub projects: Vec<Project>,
     pub settings: Settings,
+    /// The scripts running at the last quit, in the order they started, for `Settings::reopen_scripts`.
+    pub reopen: Vec<ReopenScript>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -15,16 +17,28 @@ pub struct Settings {
     /// Opens the menu bar window from anywhere, as an accelerator such as "Alt+Super+Space".
     pub shortcut: Option<String>,
     pub notify_on_failure: bool,
+    /// When a script ends on its own, with exit 0, after 30 seconds or more.
+    pub notify_on_finish: bool,
     /// None follows the system.
     pub theme: Option<Theme>,
     pub terminal_font_size: u8,
+    /// Starts the scripts in `Config::reopen` at launch.
+    pub reopen_scripts: bool,
     /// Lets AI agents read and restart scripts over MCP; see mcp.rs.
     pub mcp: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { shortcut: None, notify_on_failure: true, theme: None, terminal_font_size: 12, mcp: false }
+        Self {
+            shortcut: None,
+            notify_on_failure: true,
+            notify_on_finish: true,
+            theme: None,
+            terminal_font_size: 12,
+            reopen_scripts: false,
+            mcp: false,
+        }
     }
 }
 
@@ -39,6 +53,10 @@ pub struct Project {
     pub custom: Vec<CustomScript>,
     /// Script keys shown up front in the menu bar.
     pub pinned: Vec<String>,
+    /// Script keys restarted when they crash.
+    pub keep_alive: Vec<String>,
+    /// Scripts started and stopped together from one row in the menu bar.
+    pub groups: Vec<Group>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -47,6 +65,24 @@ pub struct CustomScript {
     pub id: String,
     pub name: String,
     pub command: String,
+}
+
+/// What `run` takes to start a script again.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReopenScript {
+    pub project_id: String,
+    pub label: String,
+    pub command: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    /// Script keys, as in `pinned`.
+    pub scripts: Vec<String>,
 }
 
 pub fn load(path: &Path) -> Config {
@@ -92,8 +128,23 @@ mod tests {
     fn round_trips() {
         let path = temp_file("trip");
         let project = Project { id: "a".into(), name: "ui".into(), ..Default::default() };
+        let settings = Settings { reopen_scripts: true, ..Default::default() };
+        let script = ReopenScript { project_id: "a".into(), label: "dev".into(), command: "pnpm run dev".into() };
+        save(&path, &Config { projects: vec![project], settings, reopen: vec![script] }).unwrap();
+        let config = load(&path);
+        assert_eq!(config.projects[0].name, "ui");
+        assert!(config.settings.reopen_scripts);
+        let script = &config.reopen[0];
+        assert_eq!((&*script.project_id, &*script.label, &*script.command), ("a", "dev", "pnpm run dev"));
+    }
+
+    #[test]
+    fn groups_survive_a_relaunch() {
+        let path = temp_file("groups");
+        let scripts = vec![":web".to_string(), "@acme/api:dev".to_string()];
+        let project = Project { groups: vec![Group { name: "dev".into(), scripts, ..Default::default() }], ..Default::default() };
         save(&path, &Config { projects: vec![project], ..Default::default() }).unwrap();
-        assert_eq!(load(&path).projects[0].name, "ui");
+        assert_eq!(load(&path).projects[0].groups[0].scripts, [":web", "@acme/api:dev"]);
     }
 
     #[test]
@@ -102,9 +153,20 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, r#"{"projects": []}"#).unwrap();
         let settings = load(&path).settings;
-        assert!(settings.notify_on_failure);
+        assert!(settings.notify_on_failure && settings.notify_on_finish);
         assert!(!settings.mcp);
         assert_eq!((settings.terminal_font_size, settings.theme, settings.shortcut), (12, None, None));
+    }
+
+    #[test]
+    fn a_config_from_before_reopen_gets_the_defaults() {
+        let path = temp_file("before-reopen");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"{"projects": [], "settings": {"terminalFontSize": 14}}"#).unwrap();
+        let config = load(&path);
+        assert_eq!(config.settings.terminal_font_size, 14);
+        assert!(!config.settings.reopen_scripts);
+        assert!(config.reopen.is_empty());
     }
 
     #[test]

@@ -276,7 +276,7 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<String, String
             let key = args["script"].as_str().unwrap_or_default();
             let (label, command) = find_script(&project, project::scan(&project).scripts, key)
                 .ok_or_else(|| format!("{} has no script {key}; list_scripts has their keys", project.name))?;
-            view(crate::run(app.state(), project.id, label, command)?)
+            view(crate::run(app.state(), project.id, label, command, Some(key.to_string()))?)
         }
         "restart_script" => {
             let id = session()?;
