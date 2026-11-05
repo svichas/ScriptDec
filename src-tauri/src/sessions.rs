@@ -11,6 +11,8 @@ use std::{
 };
 
 const SCROLLBACK: usize = 1 << 20;
+/// A second of restart backoff, shortened so a test doesn't wait 31 s for a script to give up.
+const BACKOFF_STEP: Duration = if cfg!(test) { Duration::from_millis(10) } else { Duration::from_secs(1) };
 
 /// Everything needed to (re)start a script.
 #[derive(Clone)]
@@ -21,6 +23,8 @@ pub struct Spec {
     pub command: String,
     pub cwd: String,
     pub node_bin: Option<PathBuf>,
+    /// Restart it when it crashes.
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
@@ -45,6 +49,8 @@ pub struct SessionView {
     pub status: Status,
     pub code: Option<i32>,
     pub url: Option<String>,
+    /// How long a crashed keep-alive script waits before it restarts, in seconds.
+    pub restart_in: Option<u32>,
 }
 
 struct Pty {
@@ -64,6 +70,8 @@ struct Session {
     pty: Option<Pty>,
     /// Ctrl-C was typed in the terminal, so ending now is the user's doing, not a crash.
     interrupted: bool,
+    /// Backoff steps until this crashed run restarts; taking it away cancels the restart.
+    restart_in: Option<u32>,
 }
 
 impl Session {
@@ -77,6 +85,7 @@ impl Session {
             status: self.status,
             code: self.code,
             url: self.url.clone(),
+            restart_in: self.restart_in,
         }
     }
 }
@@ -124,13 +133,14 @@ impl Sessions {
             .sessions
             .iter()
             .find(|(_, s)| s.spec.project_id == spec.project_id && s.spec.command == spec.command)
-            .map(|(id, s)| (*id, s.status, s.run));
-        let (id, run) = match existing {
-            Some((id, Status::Running | Status::Stopping, _)) => return Ok(id),
-            Some((id, _, run)) => (id, run + 1),
+            .map(|(id, s)| (*id, s.status, s.run, s.restart_in));
+        let (id, run, waited) = match existing {
+            Some((id, Status::Running | Status::Stopping, ..)) => return Ok(id),
+            // The wait of a pending restart carries over, so another quick crash waits longer.
+            Some((id, _, run, waited)) => (id, run + 1, waited),
             None => {
                 inner.next_id += 1;
-                (inner.next_id, 0)
+                (inner.next_id, 0, None)
             }
         };
 
@@ -154,6 +164,7 @@ impl Sessions {
             scrollback: vec![],
             pty,
             interrupted: false,
+            restart_in: None,
         };
         inner.sessions.insert(id, session);
         if let Some((_, sink)) = inner.sink.as_ref().filter(|(sink_id, _)| *sink_id == id) {
@@ -165,20 +176,37 @@ impl Sessions {
         thread::spawn(move || this.pump(id, run, reader));
         let this = self.clone();
         thread::spawn(move || {
+            let started = Instant::now();
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
             let mut inner = this.inner.lock().unwrap();
-            let mut failed = None;
+            let (mut failed, mut restart) = (None, None);
             if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
                 let stopped = s.status == Status::Stopping || s.interrupted;
                 s.status = if stopped { Status::Stopped } else { Status::Exited };
                 s.code = code;
                 s.pty = None; // hangs up anything left behind in the terminal
-                failed = (!stopped && code.is_some_and(|c| c != 0)).then(|| s.view(id));
+                let crashed = !stopped && code.is_some_and(|c| c != 0);
+                if crashed && s.spec.keep_alive {
+                    s.restart_in = backoff(waited, started.elapsed());
+                }
+                // A keep-alive script says once that it's restarting, and once more if it gives up.
+                failed = (crashed && s.restart_in.is_none_or(|wait| wait == 1)).then(|| s.view(id));
+                restart = s.restart_in.map(|wait| (wait, s.spec.clone()));
             }
             drop(inner);
             (this.on_change)();
             if let Some(session) = failed {
                 (this.on_failure)(&session);
+            }
+            let Some((wait, spec)) = restart else { return };
+            thread::sleep(BACKOFF_STEP * wait);
+            // Stop, Dismiss and Quit take the restart back; a start by hand meanwhile made a newer run.
+            // shortcut: one landing between this check and start() is missed; check inside start() if that ever bites.
+            let inner = this.inner.lock().unwrap();
+            let due = inner.sessions.get(&id).is_some_and(|s| s.run == run && s.restart_in.is_some());
+            drop(inner);
+            if due && this.start(spec).is_err() {
+                this.stop(id); // e.g. its folder is gone: show it failed, not restarting forever
             }
         });
         (self.on_change)();
@@ -259,6 +287,11 @@ impl Sessions {
     }
 
     pub fn stop(self: &Arc<Self>, id: u32) {
+        // A crashed script waiting to restart stays down.
+        let waiting = self.inner.lock().unwrap().sessions.get_mut(&id).and_then(|s| s.restart_in.take());
+        if waiting.is_some() {
+            (self.on_change)();
+        }
         if let Some((pid, run)) = self.interrupt(id) {
             let this = self.clone();
             thread::spawn(move || this.reap(id, run, pid));
@@ -334,6 +367,7 @@ impl Sessions {
     pub fn shutdown(&self) {
         let targets: Vec<_> = {
             let mut inner = self.inner.lock().unwrap();
+            inner.sessions.values_mut().for_each(|s| s.restart_in = None); // a restart now would outlive the app
             let alive = inner.sessions.iter_mut().filter(|(_, s)| s.pty.is_some());
             alive
                 .map(|(id, s)| {
@@ -351,6 +385,16 @@ impl Sessions {
             }
         }
     }
+}
+
+/// Steps to wait before restarting a crashed keep-alive script: 1, 2, 4, 8, then 16.
+/// A run of a minute or more starts over; None gives up, after five restarts that crashed quickly.
+fn backoff(waited: Option<u32>, ran: Duration) -> Option<u32> {
+    let wait = match waited {
+        Some(wait) if ran < Duration::from_secs(60) => wait * 2,
+        _ => 1,
+    };
+    (wait <= 16).then_some(wait)
 }
 
 fn shell_command(spec: &Spec) -> CommandBuilder {
@@ -489,6 +533,7 @@ mod tests {
             command: command.into(),
             cwd: std::env::temp_dir().to_string_lossy().into(),
             node_bin: None,
+            keep_alive: false,
         }
     }
 
@@ -614,6 +659,61 @@ mod tests {
         assert_eq!(output(&sessions, id).matches("run=").count(), 1);
         sessions.stop(id);
         wait_for("stop", || view(&sessions, id).status == Status::Stopped);
+    }
+
+    /// Sessions that run `then` on each failure notice; a keep-alive script's first comes while its restart waits.
+    fn with_notice(then: impl Fn(&Arc<Sessions>, &SessionView) + Send + Sync + 'static) -> Arc<Sessions> {
+        let slot = Arc::new(std::sync::OnceLock::<Arc<Sessions>>::new());
+        let handle = slot.clone();
+        let sessions = Sessions::new(Box::new(|| {}), Box::new(move |s: &SessionView| then(handle.get().unwrap(), s)));
+        let _ = slot.set(sessions.clone());
+        sessions
+    }
+
+    #[test]
+    fn a_keep_alive_crash_restarts_in_the_same_session_until_it_gives_up() {
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let seen = notices.clone();
+        let sessions = with_notice(move |sessions, s| {
+            seen.lock().unwrap().push(s.restart_in);
+            if s.restart_in.is_some() {
+                // Skip to the last wait, so the next quick crash gives up without four more login shells.
+                sessions.inner.lock().unwrap().sessions.get_mut(&s.id).unwrap().restart_in = Some(16);
+            }
+        });
+        let id = sessions.start(Spec { keep_alive: true, ..spec("exit 1") }).unwrap();
+        wait_for("giving up", || notices.lock().unwrap().len() == 2);
+        assert_eq!(*notices.lock().unwrap(), [Some(1), None]);
+        let run = sessions.inner.lock().unwrap().sessions[&id].run;
+        assert_eq!((run, sessions.list().len()), (1, 1));
+    }
+
+    #[test]
+    fn stop_dismiss_or_quit_during_the_wait_cancels_the_restart() {
+        let cancels: [fn(&Arc<Sessions>, u32); 3] = [|s, id| s.stop(id), |s, id| s.clear(id), |s, _| s.shutdown()];
+        let all: Vec<_> = cancels
+            .into_iter()
+            .map(|cancel| {
+                let sessions = with_notice(move |sessions, s| cancel(sessions, s.id));
+                let id = sessions.start(Spec { keep_alive: true, ..spec("exit 1") }).unwrap();
+                (sessions, id)
+            })
+            .collect();
+        for (sessions, _) in &all {
+            wait_for("cancel", || sessions.list().iter().all(|s| s.status == Status::Exited && s.restart_in.is_none()));
+        }
+        thread::sleep(BACKOFF_STEP * 20); // long past the first wait
+        for (sessions, id) in &all {
+            assert!(sessions.inner.lock().unwrap().sessions.iter().all(|(other, s)| other == id && s.run == 0));
+        }
+    }
+
+    #[test]
+    fn backs_off_up_to_16_steps_and_starts_over_after_a_long_run() {
+        let quick = Duration::from_secs(5);
+        let waits: Vec<_> = std::iter::successors(backoff(None, quick), |&wait| backoff(Some(wait), quick)).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16]);
+        assert_eq!(backoff(Some(16), Duration::from_secs(60)), Some(1));
     }
 
     #[test]
