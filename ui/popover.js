@@ -64,7 +64,7 @@ function sessionRow(session) {
       h('div', { class: 'sub' }, `${session.project} · ${statusText(session)}`)),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
-    live
+    live || session.restartIn // stopping a pending restart cancels it
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
       : iconButton('close', 'Dismiss', () => call('clear_session', { id: session.id })));
 }
