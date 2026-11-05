@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "ScriptDec windows; everything else goes through the app's own commands",
+  "description": "ScriptDeck windows; everything else goes through the app's own commands",
   "windows": ["popover", "settings", "terminal"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

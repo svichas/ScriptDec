@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in ScriptDec doesn't work as it should.
+description: Something in ScriptDeck doesn't work as it should.
 labels: [bug]
 body:
   - type: textarea
@@ -20,7 +20,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: ScriptDec version
+      label: ScriptDeck version
       description: Settings > General > About
       placeholder: 0.1.0
     validations:

@@ -1,9 +1,9 @@
 [package]
-name = "scriptdec"
+name = "scriptdeck"
 version = "0.3.0"
 description = "A menu bar app for running your package.json scripts in the background"
 license = "MIT"
-repository = "https://github.com/svichas/ScriptDec"
+repository = "https://github.com/svichas/ScriptDeck"
 edition = "2021"
 
 [build-dependencies]

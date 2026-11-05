@@ -176,11 +176,11 @@ function renderGeneral() {
   head.replaceChildren(h('h1', {}, 'General'));
   body.replaceChildren(
     group('Startup',
-      switchSetting('Launch at login', 'ScriptDec starts in the menu bar.', launchAtLogin, setLaunchAtLogin),
-      switchSetting('Reopen running scripts', 'Starts the scripts that were still running when ScriptDec quit.',
+      switchSetting('Launch at login', 'ScriptDeck starts in the menu bar.', launchAtLogin, setLaunchAtLogin),
+      switchSetting('Reopen running scripts', 'Starts the scripts that were still running when ScriptDeck quit.',
         settings.reopenScripts, (reopenScripts) => saveSettings({ reopenScripts }))),
     group('Keyboard',
-      setting('Open ScriptDec', 'Shows the menu bar window from any app.', shortcutField())),
+      setting('Open ScriptDeck', 'Shows the menu bar window from any app.', shortcutField())),
     group('Notifications',
       switchSetting('Notify when a script fails', 'Not when you stop it, or while its terminal is in front.',
         settings.notifyOnFailure, (notifyOnFailure) => saveSettings({ notifyOnFailure })),
@@ -191,7 +191,7 @@ function renderGeneral() {
       setting('Terminal font size', null, fontSize)),
     mcpCommand ? agentsGroup() : '', // not null, which replaceChildren would print
     group('About',
-      setting(`ScriptDec ${version}`,
+      setting(`ScriptDeck ${version}`,
         upToDate ? 'You have the latest version.' : 'Free and open source under the MIT License.',
         h('div', { class: 'inline' },
           h('button', { class: 'btn', disabled: checking, onClick: checkNow }, checking ? 'Checking…' : 'Check for Updates'),
@@ -460,7 +460,7 @@ function renderProject(project) {
     h('div', { class: 'path-row' },
       h('span', { class: 'path', title: project.path, 'data-tauri-drag-region': 'false' }, project.path),
       h('button', { class: 'link', onClick: () => call('reveal', { path: project.path }) }, 'Show in folder'),
-      confirmButton('remove', 'Remove', 'Remove from ScriptDec?', remove)));
+      confirmButton('remove', 'Remove', 'Remove from ScriptDeck?', remove)));
   body.replaceChildren(...(error
     ? [h('p', { class: 'note warn' }, error)]
     : [nodeSection(project), toolkitSection(project), customSection(project), groupsSection(project),
@@ -488,13 +488,13 @@ function render() {
     navItem(GENERAL, 'gear', 'General'),
     h('div', { class: 'nav-title' }, h('span', {}, 'Projects'), iconButton('plus', 'Add project', addProject)),
     h('div', { class: 'projects' }, projects.map((project) => navItem(project.id, 'folder', project.name))),
-    h('div', { class: 'foot' }, h('button', { class: 'btn', onClick: () => invoke('quit') }, 'Quit ScriptDec')),
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onClick: () => invoke('quit') }, 'Quit ScriptDeck')),
   );
   const project = selected();
   if (selectedId === GENERAL) renderGeneral();
   else if (project) renderProject(project);
   else {
-    head.replaceChildren(h('h1', {}, 'Welcome to ScriptDec'));
+    head.replaceChildren(h('h1', {}, 'Welcome to ScriptDeck'));
     body.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'Add a folder with a package.json to get started.'),
       h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),

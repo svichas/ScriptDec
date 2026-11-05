@@ -32,11 +32,11 @@ function render() {
   if (percent != null) progress.value = percent; // no value until the size is known: an empty track
   const scripts = `${running} running script${running === 1 ? '' : 's'}`;
   const [title, sub, button] = {
-    available: [`ScriptDec ${version} is available`, `You have ${current}.`, action('Update', 'download_update')],
-    downloading: [`Downloading ScriptDec ${version}…`, progress],
-    ready: [`ScriptDec ${version} is ready`, running ? `Restarting stops ${scripts}.` : 'Restart to finish updating.',
+    available: [`ScriptDeck ${version} is available`, `You have ${current}.`, action('Update', 'download_update')],
+    downloading: [`Downloading ScriptDeck ${version}…`, progress],
+    ready: [`ScriptDeck ${version} is ready`, running ? `Restarting stops ${scripts}.` : 'Restart to finish updating.',
       action('Restart Now', 'install_update')],
-    installing: [`Installing ScriptDec ${version}…`, 'ScriptDec reopens in a moment.'],
+    installing: [`Installing ScriptDeck ${version}…`, 'ScriptDeck reopens in a moment.'],
     failed: [`Couldn't update to ${version}`,
       h('button', { class: 'link', onClick: () => call('open_latest_release') }, 'Download it from GitHub'),
       action('Try Again', 'download_update')],

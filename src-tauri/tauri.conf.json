@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ScriptDec",
+  "productName": "ScriptDeck",
   "version": "0.3.0",
   "identifier": "com.scriptdec.desktop",
   "build": { "frontendDist": "../ui" },
@@ -11,7 +11,7 @@
       {
         "label": "popover",
         "url": "popover.html",
-        "title": "ScriptDec",
+        "title": "ScriptDeck",
         "width": 380,
         "height": 540,
         "visible": false,
@@ -30,7 +30,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwQkEyNkJDOTZCQTA4N0MKUldSOENMcVd2Q2E2TVBOZCsxNElNb0ZLZDMvVTlhNjNQeVBIMDFhZGZTZjI2Ly9tbU5iYkRwM04K",
-      "endpoints": ["https://github.com/svichas/ScriptDec/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/svichas/ScriptDeck/releases/latest/download/latest.json"],
       "requireSignedVersion": true
     }
   },

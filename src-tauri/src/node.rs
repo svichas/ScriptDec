@@ -198,7 +198,7 @@ mod tests {
     }
 
     fn temp(name: &str) -> PathBuf {
-        let dir = env::temp_dir().join(format!("scriptdec-node-{name}-{}", std::process::id()));
+        let dir = env::temp_dir().join(format!("scriptdeck-node-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
