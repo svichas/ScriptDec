@@ -1,6 +1,7 @@
 import {
   call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel,
-  portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel, withArgs,
+  portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel, usageLabel,
+  withArgs,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -8,6 +9,8 @@ const MAX_RESULTS = 60;
 
 let projects = [];
 let sessions = [];
+let usage = {}; // session id → { cpu, memory }, polled while the popover is shown
+let poll;
 let query = '';
 let cursor = 0;
 let results = [];
@@ -105,6 +108,12 @@ function urlChip(session) {
   }, urlLabel(session.url));
 }
 
+// Only past 500 MB or 30% CPU, so quiet scripts stay uncluttered.
+function rowUsage(id) {
+  const used = usage[id];
+  return used && (used.memory > 500 * 2 ** 20 || used.cpu > 30) ? usageLabel(used) : '';
+}
+
 let tickers = []; // one per live row on screen, redrawing its running time
 
 function sessionRow(session) {
@@ -124,6 +133,7 @@ function sessionRow(session) {
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, session.label),
       sub),
+    live && h('span', { class: 'usage', 'data-session': session.id }, rowUsage(session.id)),
     urlChip(session),
     iconButton('restart', 'Restart', () => call('restart', { id: session.id })),
     live || session.restartIn // stopping a pending restart cancels it
@@ -284,8 +294,17 @@ async function refresh() {
   await loadSessions();
 }
 
+async function loadUsage() {
+  usage = await invoke('session_usage');
+  // In place: rebuilding the list every 2 s would drop a click that straddles it.
+  for (const el of list.querySelectorAll('.usage')) el.textContent = rowUsage(el.dataset.session);
+}
+
 listen('sessions-changed', loadSessions);
 window.addEventListener('focus', () => { search.focus(); search.select(); refresh(); });
+// WebKit throttles timers in the hidden popover, so poll from focus to blur, which hides it.
+window.addEventListener('focus', () => { clearInterval(poll); poll = setInterval(loadUsage, 2000); loadUsage(); });
+window.addEventListener('blur', () => clearInterval(poll));
 // Times tick only while the window is shown: it hides on blur, and WebKit throttles timers in hidden windows.
 let ticker;
 window.addEventListener('focus', () => {

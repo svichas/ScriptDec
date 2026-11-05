@@ -82,6 +82,13 @@ export function dotClass(session) {
   return session.status === 'exited' && session.code !== 0 ? 'bad' : '';
 }
 
+/** '1.2 GB · 42%', from `session_usage`. */
+export function usageLabel({ memory, cpu }) {
+  const mb = memory / 2 ** 20;
+  const size = mb < 1024 ? `${Math.round(mb)} MB` : `${(mb / 1024).toFixed(1)} GB`;
+  return `${size} · ${Math.round(cpu)}%`;
+}
+
 export function scriptsOf(project) {
   const custom = project.custom.map((c) => ({
     key: `custom:${c.id}`, name: c.name, command: c.command, body: c.command, custom: true,

@@ -1,6 +1,6 @@
 import {
   call, Channel, dotClass, freePortButton, h, iconButton, invoke, isLive, listen, MAC, portOwners, portText,
-  statusText, urlLabel,
+  statusText, urlLabel, usageLabel,
 } from './shared.js';
 
 const tabs = document.getElementById('tabs');
@@ -52,6 +52,8 @@ term.open(screen);
 
 let sessions = [];
 let active = null;
+let usage = {}; // session id → { cpu, memory }, polled while the window is visible
+let poll;
 let owners = new Map(); // session id → what holds its busy port
 let confirming = null; // the Free port button waiting for its second click
 const arm = (key) => { confirming = key; render(); };
@@ -133,7 +135,10 @@ async function select(id) {
   term.focus();
 }
 
-const tabTitle = (session) => `${session.project}: ${session.command} (${statusText(session)})`;
+function tabTitle(session) {
+  const used = isLive(session) && usage[session.id]; // the last poll can predate a stop
+  return `${session.project}: ${session.command} (${statusText(session)}${used ? ` · ${usageLabel(used)}` : ''})`;
+}
 
 function render() {
   tabs.replaceChildren(...sessions.map((session) => h('button', {
@@ -141,6 +146,7 @@ function render() {
     role: 'tab',
     'aria-selected': String(session.id === active),
     title: tabTitle(session),
+    'data-session': session.id,
     // A running time moves on, so the tooltip is redone each time it's about to show.
     onMouseenter: (event) => { event.currentTarget.title = tabTitle(session); },
     onClick: () => select(session.id),
@@ -174,6 +180,21 @@ async function load() {
   if (owners.size) render();
 }
 
+async function loadUsage() {
+  usage = await invoke('session_usage');
+  // Titles change in place: rebuilding the tabs every 2 s would drop a click that straddles it.
+  for (const tab of tabs.children) {
+    const session = sessions.find((s) => s.id === Number(tab.dataset.session));
+    if (session) tab.title = tabTitle(session);
+  }
+}
+
+// Poll only while the window can be seen, so a minimised one samples nothing.
+function pollUsage() {
+  clearInterval(poll);
+  if (document.visibilityState === 'visible') { poll = setInterval(loadUsage, 2000); loadUsage(); }
+}
+
 listen('sessions-changed', load);
 listen('select-session', ({ payload }) => select(payload));
 listen('settings-changed', ({ payload }) => {
@@ -184,3 +205,5 @@ listen('settings-changed', ({ payload }) => {
 const wanted = Number(new URLSearchParams(location.search).get('session'));
 if (wanted) await select(wanted);
 load();
+document.addEventListener('visibilitychange', pollUsage);
+pollUsage();

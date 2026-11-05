@@ -24,6 +24,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Leave them running.** Each script has its own terminal. Open it from the menu bar, type into it, restart or stop it. Quitting ScriptDec stops every script it started.
 - **Reopen after a restart.** Turn on Reopen running scripts, and the scripts still running when you quit, log out or update start again with ScriptDec. Ones you stopped stay stopped.
 - **Find in the output.** Cmd+F (Ctrl+F on Windows) searches a terminal's whole scrollback. Cmd+click (Ctrl+click) opens any web link a script prints.
+- **CPU and memory.** Hover a script's terminal tab to see what all its processes use together, like `1.2 GB · 42%`. Past 500 MB or 30% CPU, its row in the menu bar window shows it too. macOS only.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
 - **Run with arguments.** Option-click a script's Run button (Alt-click on Windows), or press Shift+Enter on a search result, then type `--watch` or `--port 3001`. ScriptDec adds the `--` npm needs, runs it in its own terminal and remembers the arguments for next time. Save as custom script keeps the whole command.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
