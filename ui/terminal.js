@@ -101,8 +101,9 @@ search.onDidChangeResults(({ resultIndex, resultCount }) => {
 });
 
 // Caught before xterm sees it, which on Windows would send Ctrl+F to the script.
+// Not with Alt: Windows reports AltGr as Ctrl+Alt, and AltGr+F types [ on Hungarian and Czech layouts.
 window.addEventListener('keydown', (event) => {
-  if (event.code !== 'KeyF' || !(MAC ? event.metaKey : event.ctrlKey)) return;
+  if (event.code !== 'KeyF' || event.altKey || !(MAC ? event.metaKey : event.ctrlKey)) return;
   event.preventDefault();
   event.stopPropagation();
   findBar.hidden = false;
