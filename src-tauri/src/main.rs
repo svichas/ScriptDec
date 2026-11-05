@@ -171,8 +171,11 @@ async fn update_settings(app: AppHandle, settings: Settings) -> Result<(), Strin
             return Err(error);
         }
     }
+    // Only on a change, so a socket that can't open doesn't block every other setting.
     #[cfg(unix)]
-    mcp::enable(&app, settings.mcp)?;
+    if settings.mcp != old.mcp {
+        mcp::enable(&app, settings.mcp)?;
+    }
     app.set_theme(settings.theme);
     state.edit(|config| {
         config.settings = settings.clone();
