@@ -381,6 +381,21 @@ fn long_task(code: Option<i32>, millis: u64) -> Option<String> {
     })
 }
 
+/// The title and body for a run that ended on its own: a crash, or a long task finishing, each behind its own switch.
+fn notification(session: &SessionView, failed: bool, settings: &Settings) -> Option<(String, String)> {
+    let ran = session.ended_at.map_or(0, |end| end.saturating_sub(session.started_at));
+    match (failed, long_task(session.code, ran)) {
+        (true, _) if settings.notify_on_failure => Some((
+            format!("{} failed", session.label),
+            format!("{}: exit code {}", session.project, session.code.unwrap_or_default()),
+        )),
+        (false, Some(took)) if settings.notify_on_finish => {
+            Some((format!("{} finished in {took}", session.label), session.project.clone()))
+        }
+        _ => None,
+    }
+}
+
 /// A crash, or a long task finishing. Stopped runs never get here.
 fn script_ended(app: &AppHandle, session: &SessionView, failed: bool) {
     // The output is already in front of them, and `pnpm outdated` exiting 1 isn't news.
@@ -389,18 +404,9 @@ fn script_ended(app: &AppHandle, session: &SessionView, failed: bool) {
         return;
     }
     let settings = app.state::<App>().config.lock().unwrap().settings.clone();
-    let ran = session.ended_at.map_or(0, |end| end.saturating_sub(session.started_at));
-    let (title, body) = match (failed, long_task(session.code, ran)) {
-        (true, _) if settings.notify_on_failure => (
-            format!("{} failed", session.label),
-            format!("{}: exit code {}", session.project, session.code.unwrap_or_default()),
-        ),
-        (false, Some(took)) if settings.notify_on_finish => {
-            (format!("{} finished in {took}", session.label), session.project.clone())
-        }
-        _ => return,
-    };
-    let _ = app.notification().builder().title(title).body(body).show();
+    if let Some((title, body)) = notification(session, failed, &settings) {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
 }
 
 // Only macOS tints template icons; a black glyph would vanish on a dark Windows taskbar.
@@ -556,5 +562,35 @@ mod tests {
         assert_eq!(long_task(Some(0), 5_000), None);
         assert_eq!(long_task(Some(1), 60_000), None);
         assert_eq!(long_task(None, 60_000), None);
+    }
+
+    #[test]
+    fn each_switch_silences_only_its_own_notification() {
+        let ended = |code: i32, secs: u64| SessionView {
+            id: 1,
+            project_id: "p".into(),
+            project: "web".into(),
+            label: "build".into(),
+            command: "pnpm build".into(),
+            status: Status::Exited,
+            code: Some(code),
+            started_at: 1_000,
+            ended_at: Some(1_000 + secs * 1000),
+            url: None,
+        };
+        let (long, short, crash) = (ended(0, 123), ended(0, 5), ended(1, 3));
+        let all = Settings::default();
+        let no_finish = Settings { notify_on_finish: false, ..Settings::default() };
+        let no_crash = Settings { notify_on_failure: false, ..Settings::default() };
+        let post = |s: &SessionView, settings| notification(s, s.code != Some(0), settings);
+        let title = |s: &SessionView, settings| post(s, settings).map(|(title, _)| title);
+
+        assert_eq!(post(&long, &all), Some(("build finished in 2m 3s".into(), "web".into())));
+        assert_eq!(post(&crash, &all), Some(("build failed".into(), "web: exit code 1".into())));
+        assert_eq!(post(&short, &all), None);
+        assert_eq!(title(&long, &no_finish), None);
+        assert_eq!(title(&crash, &no_finish).as_deref(), Some("build failed"));
+        assert_eq!(title(&long, &no_crash).as_deref(), Some("build finished in 2m 3s"));
+        assert_eq!(title(&crash, &no_crash), None);
     }
 }
