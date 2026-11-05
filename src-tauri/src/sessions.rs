@@ -545,8 +545,11 @@ mod tests {
 
         let typed = sessions.start(spec("echo ready; sleep 30")).unwrap();
         wait_for("ready", || output(&sessions, typed).contains("ready"));
-        sessions.send_input(typed, b"\x03");
-        wait_for("typed Ctrl-C", || view(&sessions, typed).status == Status::Stopped);
+        // The shell can drop a Ctrl-C that lands before `sleep` has started, so type it until one lands, as a person would.
+        wait_for("typed Ctrl-C", || {
+            sessions.send_input(typed, b"\x03");
+            view(&sessions, typed).status == Status::Stopped
+        });
 
         let quit = sessions.start(spec("echo ready; sleep 30")).unwrap();
         wait_for("ready", || output(&sessions, quit).contains("ready"));
