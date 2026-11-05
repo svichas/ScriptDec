@@ -68,7 +68,7 @@ pub struct PortOwner {
 /// What a script uses, summed over its process tree.
 #[derive(Serialize, PartialEq, Debug)]
 pub struct Usage {
-    /// Percent of one core, as Activity Monitor counts it, so it can pass 100.
+    /// Percent of the whole machine, so 100 means every core is busy.
     pub cpu: f32,
     /// Resident memory in bytes.
     pub memory: u64,
@@ -168,7 +168,8 @@ impl Sessions {
             return HashMap::new();
         }
         let procs = processes().unwrap_or_default();
-        roots.into_iter().filter_map(|(id, pid)| Some((id, tree_usage(&procs, pid)?))).collect()
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        roots.into_iter().filter_map(|(id, pid)| Some((id, tree_usage(&procs, pid, cores)?))).collect()
     }
 
     /// Starts a script, or returns the session already running it.
@@ -599,14 +600,16 @@ fn process_table() -> Vec<(u32, u32)> {
 }
 
 /// A process tree's usage, or None once its root has exited.
-fn tree_usage(procs: &[Proc], root: u32) -> Option<Usage> {
+fn tree_usage(procs: &[Proc], root: u32, cores: usize) -> Option<Usage> {
     if !procs.iter().any(|p| p.pid == root) {
         return None;
     }
     let table: Vec<_> = procs.iter().map(|p| (p.pid, p.ppid)).collect();
     let tree = descendants(&table, root);
     let members = procs.iter().filter(|p| tree.contains(&p.pid));
-    Some(Usage { cpu: members.clone().map(|p| p.cpu).sum(), memory: members.map(|p| p.rss * 1024).sum() })
+    // ps gives percent of one core; dividing by the cores makes 100 the whole machine.
+    let cpu = members.clone().map(|p| p.cpu).sum::<f32>() / cores as f32;
+    Some(Usage { cpu, memory: members.map(|p| p.rss * 1024).sum() })
 }
 
 #[cfg(unix)]
@@ -1080,8 +1083,9 @@ mod tests {
     #[test]
     fn sums_usage_over_the_whole_process_tree() {
         let procs = parse_ps("1 0 9.0 9000\n10 1 0.5 1024\n11 10 40.0 2048\n12 11 1.5 1024\n20 1 50.0 4096\n");
-        assert_eq!(tree_usage(&procs, 10), Some(Usage { cpu: 42.0, memory: 4096 * 1024 }));
-        assert_eq!(tree_usage(&procs, 99), None);
+        // 42% of one core is 21% of a two-core machine.
+        assert_eq!(tree_usage(&procs, 10, 2), Some(Usage { cpu: 21.0, memory: 4096 * 1024 }));
+        assert_eq!(tree_usage(&procs, 99, 2), None);
     }
 
     #[test]
