@@ -227,6 +227,9 @@ body.popover { background: transparent; overflow: hidden; }
 .project-head.open .glyph { transform: rotate(90deg); }
 .hint { padding: 4px 12px 8px; color: var(--fg-2); font-size: 11px; }
 .hint.port { padding: 0 8px 8px 28px; } /* under its row's title */
+.args { display: flex; align-items: center; gap: 8px; padding: 2px 8px 6px 28px; }
+.args input { flex: 1; min-width: 0; font-size: 12px; }
+.args .link { font-size: 11px; white-space: nowrap; }
 
 /* Settings */
 .settings { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }

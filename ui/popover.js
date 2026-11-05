@@ -1,6 +1,6 @@
 import {
   call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel,
-  portOwners, portText, runScript, scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
+  portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel, withArgs,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -25,6 +25,19 @@ function toggleCollapsed(id) {
   render();
 }
 
+// The arguments field under a script's row: Shift+Enter on a search result, or Option-click on Run.
+let argsFor = null; // [project, script]
+const argsKey = (project, script) => `${project.id}:${script.key}`; // script keys repeat across projects
+function loadLastArgs() {
+  try { return JSON.parse(localStorage.getItem('lastArgs')) ?? {}; } catch { return {}; }
+}
+const lastArgs = loadLastArgs();
+const argsInput = h('input', {
+  class: 'mono', placeholder: '--watch', 'aria-label': 'Arguments', spellcheck: 'false', onKeydown: onArgsKey,
+});
+const argsField = h('div', { class: 'args' }, argsInput,
+  h('button', { class: 'link', onClick: saveArgs }, 'Save as custom script'));
+
 const search = h('input', {
   type: 'search',
   placeholder: 'Search scripts…',
@@ -48,6 +61,40 @@ function act(project, script) {
   const session = sessionFor(project, script);
   if (session && isLive(session)) return openTerminal(session.id);
   return runScript(project, script);
+}
+
+function openArgs(project, script) {
+  argsFor = [project, script];
+  argsInput.value = lastArgs[argsKey(project, script)] ?? '';
+  render();
+  argsInput.focus();
+  argsInput.select();
+}
+
+function closeArgs() {
+  argsFor = null;
+  render();
+  search.focus();
+}
+
+function onArgsKey(event) {
+  if (event.key === 'Escape') return closeArgs();
+  if (event.key !== 'Enter') return;
+  const [project, script] = argsFor;
+  const args = argsInput.value.trim();
+  lastArgs[argsKey(project, script)] = args;
+  try { localStorage.setItem('lastArgs', JSON.stringify(lastArgs)); } catch { /* only a convenience */ }
+  closeArgs();
+  act(project, withArgs(project, script, args));
+}
+
+async function saveArgs() {
+  if (!argsInput.value.trim()) return argsInput.focus();
+  const [project, script] = argsFor;
+  const run = withArgs(project, script, argsInput.value);
+  project.custom.push({ id: crypto.randomUUID(), name: scriptLabel(run), command: run.command });
+  await saveProject(project);
+  closeArgs();
 }
 
 function urlChip(session) {
@@ -83,7 +130,7 @@ function scriptRow(project, script, showProject, selected) {
   const live = session && isLive(session);
   const pinned = project.pinned.includes(script.key);
   const sub = showProject ? `${project.name} · ${script.command}` : script.command;
-  return h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => act(project, script) },
+  const row = h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => act(project, script) },
     h('span', { class: `dot ${session ? dotClass(session) : ''}` }),
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, scriptLabel(script)),
@@ -94,7 +141,8 @@ function scriptRow(project, script, showProject, selected) {
     }, pinned ? 'pinned' : ''),
     live
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
-      : iconButton('play', 'Run', () => runScript(project, script), 'go'));
+      : iconButton('play', 'Run', (event) => (event.altKey ? openArgs(project, script) : runScript(project, script)), 'go'));
+  return argsFor && argsKey(...argsFor) === argsKey(project, script) ? [row, argsField] : row;
 }
 
 /** The running sessions of a group's scripts, and the scripts that aren't running. */
@@ -167,6 +215,8 @@ function searchResults() {
 
 function render() {
   const scroll = list.scrollTop;
+  // Rebuilding the list detaches the arguments field, which drops its focus.
+  if (document.activeElement === argsInput) queueMicrotask(() => argsInput.focus());
   if (!projects.length) {
     list.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'No projects yet.'),
@@ -177,7 +227,7 @@ function render() {
     results = searchResults();
     cursor = Math.min(cursor, Math.max(results.length - 1, 0));
     list.replaceChildren(...(results.length
-      ? results.map(([project, item], i) => (item.scripts ? groupRow : scriptRow)(
+      ? results.flatMap(([project, item], i) => (item.scripts ? groupRow : scriptRow)(
         project, item, projects.length > 1, i === cursor))
       : [h('div', { class: 'empty' }, 'No matching scripts.')]));
     return;
@@ -203,7 +253,9 @@ function onSearchKey(event) {
     list.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
   } else if (event.key === 'Enter' && query.trim() && results[cursor]) {
     const [project, item] = results[cursor];
-    (item.scripts ? startGroup : act)(project, item);
+    if (item.scripts) startGroup(project, item); // a group has no arguments field
+    else if (event.shiftKey) openArgs(project, item);
+    else act(project, item);
   }
 }
 
@@ -221,4 +273,6 @@ async function refresh() {
 
 listen('sessions-changed', loadSessions);
 window.addEventListener('focus', () => { search.focus(); search.select(); refresh(); });
+// Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
+window.addEventListener('blur', () => argsFor && closeArgs());
 refresh();

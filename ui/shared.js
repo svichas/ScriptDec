@@ -96,6 +96,15 @@ export function runScript(project, script) {
   return call('run', { projectId: project.id, label: scriptLabel(script), command: script.command, key: script.key });
 }
 
+/** The script with arguments for one run. Not quoted: the user typed them, as in a terminal. */
+export function withArgs(project, script, args) {
+  const typed = args.trim();
+  if (!typed) return script;
+  // npm would take --watch as its own flag; pnpm, yarn and bun pass it on, and pnpm 7+ would pass a `--` on too.
+  const dashes = !script.custom && project.scan.pm === 'npm' ? ' --' : '';
+  return { ...script, name: `${script.name} ${typed}`, command: `${script.command}${dashes} ${typed}` };
+}
+
 export function saveProject({ scan, ...project }) {
   return call('update_project', { project });
 }

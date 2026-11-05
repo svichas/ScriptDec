@@ -25,6 +25,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Reopen after a restart.** Turn on Reopen running scripts, and the scripts still running when you quit, log out or update start again with ScriptDec. Ones you stopped stay stopped.
 - **Find in the output.** Cmd+F (Ctrl+F on Windows) searches a terminal's whole scrollback. Cmd+click (Ctrl+click) opens any web link a script prints.
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
+- **Run with arguments.** Option-click a script's Run button (Alt-click on Windows), or press Shift+Enter on a search result, then type `--watch` or `--port 3001`. ScriptDec adds the `--` npm needs, runs it in its own terminal and remembers the arguments for next time. Save as custom script keeps the whole command.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
 - **Groups.** Start the scripts you always run together, say web, api and a worker, with one click, and stop them the same way. Each still gets its own terminal.
 - **Dev server links.** The port a script prints becomes a one-click link.
