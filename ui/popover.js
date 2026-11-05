@@ -108,10 +108,10 @@ function urlChip(session) {
   }, urlLabel(session.url));
 }
 
-// Only past 500 MB or 30% CPU, so quiet scripts stay uncluttered.
+// Only past 500 MB or 10% CPU (about one busy core), so quiet scripts stay uncluttered.
 function rowUsage(id) {
   const used = usage[id];
-  return used && (used.memory > 500 * 2 ** 20 || used.cpu > 30) ? usageLabel(used) : '';
+  return used && (used.memory > 500 * 2 ** 20 || used.cpu > 10) ? usageLabel(used) : '';
 }
 
 let tickers = []; // one per live row on screen, redrawing its running time
