@@ -154,6 +154,11 @@ impl Sessions {
         let pid = child.process_id().unwrap_or(0);
 
         let pty = Some(Pty { master: pair.master, writer });
+        // A restart starts from a clean screen, except after a crash: its output is why you'd look.
+        let scrollback = match waited {
+            Some(_) => inner.sessions.get_mut(&id).map(|s| std::mem::take(&mut s.scrollback)).unwrap_or_default(),
+            None => vec![],
+        };
         let session = Session {
             spec,
             status: Status::Running,
@@ -161,14 +166,14 @@ impl Sessions {
             url: None,
             pid,
             run,
-            scrollback: vec![],
+            scrollback,
             pty,
             interrupted: false,
             restart_in: None,
         };
         inner.sessions.insert(id, session);
-        if let Some((_, sink)) = inner.sink.as_ref().filter(|(sink_id, _)| *sink_id == id) {
-            sink(b"\x1bc"); // a restart starts from a clean screen
+        if let Some((_, sink)) = inner.sink.as_ref().filter(|(sink_id, _)| *sink_id == id && waited.is_none()) {
+            sink(b"\x1bc");
         }
         drop(inner);
 
@@ -677,15 +682,17 @@ mod tests {
         let sessions = with_notice(move |sessions, s| {
             seen.lock().unwrap().push(s.restart_in);
             if s.restart_in.is_some() {
+                wait_for("first run's output", || output(sessions, s.id).contains("boom"));
                 // Skip to the last wait, so the next quick crash gives up without four more login shells.
                 sessions.inner.lock().unwrap().sessions.get_mut(&s.id).unwrap().restart_in = Some(16);
             }
         });
-        let id = sessions.start(Spec { keep_alive: true, ..spec("exit 1") }).unwrap();
+        let id = sessions.start(Spec { keep_alive: true, ..spec("echo boom; exit 1") }).unwrap();
         wait_for("giving up", || notices.lock().unwrap().len() == 2);
         assert_eq!(*notices.lock().unwrap(), [Some(1), None]);
         let run = sessions.inner.lock().unwrap().sessions[&id].run;
         assert_eq!((run, sessions.list().len()), (1, 1));
+        wait_for("both runs' output", || output(&sessions, id).matches("boom").count() == 2);
     }
 
     #[test]
