@@ -203,6 +203,12 @@ fn list_sessions(state: State<App>) -> Vec<SessionView> {
     state.sessions.list()
 }
 
+/// Async: it runs `ps`, which the main thread shouldn't wait for.
+#[tauri::command]
+async fn session_usage(app: AppHandle) -> std::collections::HashMap<u32, sessions::Usage> {
+    app.state::<App>().sessions.usage()
+}
+
 #[tauri::command]
 fn stop(state: State<App>, id: u32) {
     state.sessions.stop(id);
@@ -496,6 +502,7 @@ fn main() {
             update_settings,
             run,
             list_sessions,
+            session_usage,
             stop,
             stop_all,
             restart,

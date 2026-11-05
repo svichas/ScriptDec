@@ -47,6 +47,15 @@ pub struct SessionView {
     pub url: Option<String>,
 }
 
+/// What a script uses, summed over its process tree.
+#[derive(Serialize, PartialEq, Debug)]
+pub struct Usage {
+    /// Percent of one core, as Activity Monitor counts it, so it can pass 100.
+    pub cpu: f32,
+    /// Resident memory in bytes.
+    pub memory: u64,
+}
+
 struct Pty {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
@@ -112,6 +121,20 @@ impl Sessions {
         let mut list: Vec<_> = inner.sessions.iter().map(|(id, s)| s.view(*id)).collect();
         list.sort_by_key(|s| s.id);
         list
+    }
+
+    /// Each live session's usage, by id. Runs `ps`, so windows only ask while they're shown.
+    pub fn usage(&self) -> HashMap<u32, Usage> {
+        let roots: Vec<_> = {
+            let inner = self.inner.lock().unwrap();
+            inner.sessions.iter().filter(|(_, s)| s.pty.is_some()).map(|(id, s)| (*id, s.pid)).collect()
+        };
+        // shortcut: Unix only, through ps; Windows would need its own process APIs if it's wanted there.
+        if roots.is_empty() || cfg!(windows) {
+            return HashMap::new();
+        }
+        let procs = processes().unwrap_or_default();
+        roots.into_iter().filter_map(|(id, pid)| Some((id, tree_usage(&procs, pid)?))).collect()
     }
 
     /// Starts a script, or returns the session already running it.
@@ -403,16 +426,51 @@ fn descendants(table: &[(u32, u32)], root: u32) -> Vec<u32> {
     tree
 }
 
+/// One row of `ps -A -o pid=,ppid=,%cpu=,rss=`.
+struct Proc {
+    pid: u32,
+    ppid: u32,
+    cpu: f32,
+    /// KiB, as ps gives it.
+    rss: u64,
+}
+
+/// Every process, or None if ps can't run.
+fn processes() -> Option<Vec<Proc>> {
+    // The C locale, or a German one prints the CPU as 1,5.
+    let out = Command::new("ps").args(["-A", "-o", "pid=,ppid=,%cpu=,rss="]).env("LC_ALL", "C").output().ok()?;
+    Some(parse_ps(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Only the pid and ppid must parse: kill_tree needs nothing else.
+fn parse_ps(text: &str) -> Vec<Proc> {
+    let row = |line: &str| {
+        let mut parts = line.split_whitespace();
+        Some(Proc {
+            pid: parts.next()?.parse().ok()?,
+            ppid: parts.next()?.parse().ok()?,
+            cpu: parts.next().and_then(|p| p.parse().ok()).unwrap_or_default(),
+            rss: parts.next().and_then(|p| p.parse().ok()).unwrap_or_default(),
+        })
+    };
+    text.lines().filter_map(row).collect()
+}
+
+/// A process tree's usage, or None once its root has exited.
+fn tree_usage(procs: &[Proc], root: u32) -> Option<Usage> {
+    if !procs.iter().any(|p| p.pid == root) {
+        return None;
+    }
+    let table: Vec<_> = procs.iter().map(|p| (p.pid, p.ppid)).collect();
+    let tree = descendants(&table, root);
+    let members = procs.iter().filter(|p| tree.contains(&p.pid));
+    Some(Usage { cpu: members.clone().map(|p| p.cpu).sum(), memory: members.map(|p| p.rss * 1024).sum() })
+}
+
 #[cfg(unix)]
 fn kill_tree(root: u32, signal: Signal) {
-    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=,ppid="]).output() else { return };
-    let table: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace().map(|p| p.parse().ok());
-            Some((parts.next()??, parts.next()??))
-        })
-        .collect();
+    let Some(procs) = processes() else { return };
+    let table: Vec<_> = procs.iter().map(|p| (p.pid, p.ppid)).collect();
     let signal = match signal {
         Signal::Term => libc::SIGTERM,
         Signal::Kill => libc::SIGKILL,
@@ -689,5 +747,31 @@ mod tests {
     fn walks_the_whole_process_tree() {
         let table = [(2, 1), (3, 2), (4, 3), (9, 8)];
         assert_eq!(descendants(&table, 1), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn reads_ps_output() {
+        let text = "    1     0   0.4  23216\n  312     1  12.5   4096\nnot a process\n  313   312   1,5      -\n";
+        let rows: Vec<_> = parse_ps(text).iter().map(|p| (p.pid, p.ppid, p.cpu, p.rss)).collect();
+        assert_eq!(rows, [(1, 0, 0.4, 23216), (312, 1, 12.5, 4096), (313, 312, 0.0, 0)]);
+    }
+
+    #[test]
+    fn sums_usage_over_the_whole_process_tree() {
+        let procs = parse_ps("1 0 9.0 9000\n10 1 0.5 1024\n11 10 40.0 2048\n12 11 1.5 1024\n20 1 50.0 4096\n");
+        assert_eq!(tree_usage(&procs, 10), Some(Usage { cpu: 42.0, memory: 4096 * 1024 }));
+        assert_eq!(tree_usage(&procs, 99), None);
+    }
+
+    #[test]
+    fn reports_the_memory_a_running_script_holds() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("perl -e '$x = q(a) x 1e8; print qq(ready\\n); sleep 60'")).unwrap();
+        wait_for("ready", || output(&sessions, id).contains("ready"));
+        let memory = sessions.usage()[&id].memory;
+        assert!(memory > 50_000_000, "{memory}");
+        sessions.stop(id);
+        wait_for("stop", || view(&sessions, id).status == Status::Stopped);
+        assert!(!sessions.usage().contains_key(&id));
     }
 }
