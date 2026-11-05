@@ -256,7 +256,7 @@ body.popover { background: transparent; overflow: hidden; }
 .inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .note { margin: 6px 0 0; color: var(--fg-2); font-size: 12px; }
 .custom-row, .add-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
-.custom-row .actions { display: flex; gap: 4px; }
+.custom-row .actions { display: flex; align-items: center; gap: 4px; }
 .script-editor { margin: 4px 0; }
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .section-head h2 { margin: 0; }

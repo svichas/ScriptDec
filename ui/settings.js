@@ -225,6 +225,18 @@ function toolkitSection(project) {
       : h('button', { class: 'btn', title: tool.command, onClick: () => run(tool) }, tool.label)))));
 }
 
+const customKey = (script) => `custom:${script.id}`; // the key scriptsOf gives it
+
+/** Takes effect from the script's next start. */
+const keepAliveSwitch = (project, key) => h('input', {
+  type: 'checkbox', class: 'switch', role: 'switch', checked: project.keepAlive.includes(key),
+  title: 'Restart if it crashes', 'aria-label': 'Restart if it crashes',
+  onChange: (event) => {
+    project.keepAlive = project.keepAlive.filter((k) => k !== key).concat(event.target.checked ? [key] : []);
+    saveProject(project);
+  },
+});
+
 function customSection(project) {
   const save = () => saveProject(project);
   const rows = project.custom.map((script) => h('div', { class: 'custom-row' },
@@ -237,10 +249,12 @@ function customSection(project) {
       onChange: (e) => { script.command = e.target.value; save(); },
     }),
     h('div', { class: 'actions' },
-      iconButton('play', 'Run', () => launch(project, script), 'go'),
+      keepAliveSwitch(project, customKey(script)),
+      iconButton('play', 'Run', () => launch(project, { ...script, key: customKey(script) }), 'go'),
       iconButton('close', 'Delete', async () => {
         project.custom = project.custom.filter((s) => s !== script);
-        for (const group of project.groups) group.scripts = group.scripts.filter((key) => key !== `custom:${script.id}`);
+        project.keepAlive = project.keepAlive.filter((k) => k !== customKey(script));
+        for (const group of project.groups) group.scripts = group.scripts.filter((key) => key !== customKey(script));
         await save();
         render();
       }, 'danger'))));
@@ -354,6 +368,7 @@ function scriptRow(project, script) {
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, script.name),
       h('div', { class: 'sub mono', title: script.body }, script.body)),
+    keepAliveSwitch(project, script.key),
     iconButton('pencil', 'Edit script', () => openEditor({
       key: script.key, package: script.package, old: script.name, name: script.name, body: script.body,
     })),

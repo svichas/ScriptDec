@@ -37,6 +37,8 @@ pub struct Project {
     pub custom: Vec<CustomScript>,
     /// Script keys shown up front in the menu bar.
     pub pinned: Vec<String>,
+    /// Script keys restarted when they crash.
+    pub keep_alive: Vec<String>,
     /// Scripts started and stopped together from one row in the menu bar.
     pub groups: Vec<Group>,
 }

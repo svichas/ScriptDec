@@ -138,7 +138,8 @@ async fn edit_script(
     state.edit(|config| {
         let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
         project::move_in_groups(project, &old_key, new_key.clone());
-        project::move_pin(&mut project.pinned, &old_key, new_key);
+        project::move_pin(&mut project.pinned, &old_key, new_key.clone());
+        project::move_pin(&mut project.keep_alive, &old_key, new_key);
         Ok(())
     })
 }
@@ -185,8 +186,15 @@ fn set_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Result<(), String> {
     shortcuts.register(shortcut).map_err(|e| format!("Can't use {shortcut} as a shortcut: {e}"))
 }
 
+/// `key` picks up the script's settings; the toolkit and Node installs have none.
 #[tauri::command]
-fn run(state: State<App>, project_id: String, label: String, command: String) -> Result<u32, String> {
+fn run(
+    state: State<App>,
+    project_id: String,
+    label: String,
+    command: String,
+    key: Option<String>,
+) -> Result<u32, String> {
     let project = state.project(&project_id)?;
     let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
     state.sessions.start(Spec {
@@ -196,6 +204,7 @@ fn run(state: State<App>, project_id: String, label: String, command: String) ->
         command,
         cwd: project.path,
         node_bin: node.resolved.as_deref().and_then(node::bin_dir),
+        keep_alive: key.is_some_and(|key| project.keep_alive.contains(&key)),
     })
 }
 
@@ -378,10 +387,12 @@ fn script_failed(app: &AppHandle, session: &SessionView) {
     if watching || !app.state::<App>().config.lock().unwrap().settings.notify_on_failure {
         return;
     }
+    // A keep-alive script's first crash; if it gives up, the plain notice follows.
+    let restarting = if session.restart_in.is_some() { ", restarting" } else { "" };
     let notification = app.notification().builder();
     let _ = notification
         .title(format!("{} failed", session.label))
-        .body(format!("{}: exit code {}", session.project, session.code.unwrap_or_default()))
+        .body(format!("{}: exit code {}{restarting}", session.project, session.code.unwrap_or_default()))
         .show();
 }
 
