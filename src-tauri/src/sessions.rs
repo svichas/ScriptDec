@@ -695,6 +695,8 @@ mod tests {
             }
         });
         let id = sessions.start(Spec { keep_alive: true, ..spec("echo boom; exit 1") }).unwrap();
+        // One wait per run: a login shell can take 15 s on a busy machine.
+        wait_for("first crash", || !notices.lock().unwrap().is_empty());
         wait_for("giving up", || notices.lock().unwrap().len() == 2);
         assert_eq!(*notices.lock().unwrap(), [Some(1), None]);
         let run = sessions.inner.lock().unwrap().sessions[&id].run;
