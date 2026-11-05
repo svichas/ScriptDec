@@ -349,6 +349,23 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Quitting and Windows' updater both end here: saves the running scripts for "Reopen running scripts", then stops them.
+fn stop_scripts_for_exit(app: &AppHandle) {
+    let state = app.state::<App>();
+    if state.config.lock().unwrap().settings.reopen_scripts {
+        // Running only, so a script the user is stopping stays stopped. list() is in the order they started.
+        let running = state.sessions.list().into_iter().filter(|s| s.status == Status::Running);
+        let reopen = running
+            .map(|s| config::ReopenScript { project_id: s.project_id, label: s.label, command: s.command })
+            .collect();
+        let _ = state.edit(|config| {
+            config.reopen = reopen;
+            Ok(())
+        });
+    }
+    state.sessions.shutdown();
+}
+
 /// The menu-bar-only look, except while a real window is open so it can be reached with Cmd-Tab.
 fn show_in_dock(app: &AppHandle, visible: bool) {
     #[cfg(target_os = "macos")]
@@ -479,7 +496,12 @@ fn main() {
         .manage(update::Updates::default())
         .setup(|app| {
             let config_path = app.path().app_config_dir()?.join("config.json");
-            let config = config::load(&config_path);
+            let mut config = config::load(&config_path);
+            // Cleared at every launch, switch on or off, so an old list never starts scripts later.
+            let reopen = std::mem::take(&mut config.reopen);
+            if !reopen.is_empty() {
+                let _ = config::save(&config_path, &config);
+            }
             let first_run = config.projects.is_empty();
             let settings = config.settings.clone();
             let (changed, failed) = (app.handle().clone(), app.handle().clone());
@@ -497,6 +519,14 @@ fn main() {
             app.set_theme(settings.theme);
             if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
                 eprintln!("{error}");
+            }
+            if settings.reopen_scripts {
+                for script in reopen {
+                    // Through run, for the project's Node version. A removed project's scripts fail and are skipped.
+                    // shortcut: no script key is saved, so a reopened script doesn't restart on crash until it's
+                    // started from the menu again; save the key with it to keep that.
+                    let _ = run(app.state(), script.project_id, script.label, script.command, None);
+                }
             }
             if first_run {
                 let handle = app.handle().clone();
@@ -561,7 +591,7 @@ fn main() {
         .expect("failed to start ScriptDec")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                app.state::<App>().sessions.shutdown();
+                stop_scripts_for_exit(app);
             }
         });
 }
