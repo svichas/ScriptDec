@@ -224,6 +224,7 @@ body.popover { background: transparent; overflow: hidden; }
 .project-head .glyph { color: var(--fg-2); transition: transform 0.12s; }
 .project-head.open .glyph { transform: rotate(90deg); }
 .hint { padding: 4px 12px 8px; color: var(--fg-2); font-size: 11px; }
+.hint.port { padding: 0 8px 8px 28px; } /* under its row's title */
 
 /* Settings */
 .settings { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }

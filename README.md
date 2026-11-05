@@ -25,6 +25,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Search across all projects.** Click the icon or press your shortcut, type, press Enter.
 - **Pin** the scripts you use so they stay at the top. The icon shows how many are running.
 - **Dev server links.** The port a script prints becomes a one-click link.
+- **Port already in use.** When a script can't start because its port is taken, its row names what holds it, another script or a leftover process, and Free port stops that and restarts yours. macOS only.
 - **Node per project.** Follows `.nvmrc`, `.node-version` or a Volta pin (including up the tree), or pick any version installed with nvm, fnm or Volta. Missing versions get an install button.
 - **Edit `package.json` scripts.** Add, change, rename or delete them, for the root or any workspace package. Key order, indentation and line endings stay as they were.
 - **Crash notifications.** A system notification when a script fails on its own. Stopping one yourself doesn't count, and neither does a failure you're watching in the terminal window.

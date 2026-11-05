@@ -101,3 +101,38 @@ export function nodeLabel(node) {
 }
 
 export const urlLabel = (url) => `:${new URL(url).port}`;
+
+/** What holds each busy port, by session id: null when lsof can't see it. */
+export async function portOwners(sessions) {
+  const busy = sessions.filter((s) => s.busyPort);
+  const owners = await Promise.all(busy.map((s) => invoke('port_owner', { port: s.busyPort })));
+  return new Map(busy.map((s, i) => [s.id, owners[i]]));
+}
+
+/** "Port 3000 is in use by node (pid 4120)", or by one of our scripts. */
+export function portText(session, owner) {
+  const script = owner?.session;
+  const by = script ? `${script.label} in ${script.project}` : owner && `${owner.command} (pid ${owner.pid})`;
+  return `Port ${session.busyPort} is in use${by ? ` by ${by}` : ''}`;
+}
+
+/**
+ * Stops what holds the port, then restarts the script. It asks first, like Remove:
+ * `arm` gets the key of the button waiting for its second click, or null.
+ */
+export function freePortButton(session, owner, confirming, arm) {
+  if (!owner) return null;
+  const key = `${session.id}:${owner.pid}`; // a new owner needs a new confirmation
+  const armed = confirming === key;
+  return h('button', {
+    class: `btn ${armed ? 'danger' : ''}`,
+    onClick: (event) => {
+      event.stopPropagation();
+      arm(armed ? null : key);
+      if (!armed) return;
+      // A refusal names the new owner in a toast, and the windows reload.
+      call('free_port', { port: session.busyPort, pid: owner.pid })
+        .then(() => call('restart', { id: session.id }), () => {});
+    },
+  }, armed ? 'Free port and restart?' : 'Free port');
+}
