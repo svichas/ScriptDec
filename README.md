@@ -34,6 +34,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Edit `package.json` scripts.** Add, change, rename or delete them, for the root or any workspace package. Key order, indentation and line endings stay as they were.
 - **Crash notifications.** A system notification when a script fails on its own. Stopping one yourself doesn't count, and neither does a failure you're watching in the terminal window.
 - **Restart on crash.** Switch it on per script in Settings, and a script that dies on its own comes back after 1 s, then 2, 4, 8 and 16 s. If all five restarts crash within a minute of starting, it stays down. You get one notification as it starts restarting and one if it gives up. Stopping it yourself never restarts it.
+- **Durations.** Each script shows how long it has been running, or how long it took. Installs, builds and anything else that take 30 seconds or more post a notification when they finish, unless their terminal is in front.
 - **Toolkit.** Install, outdated, update, audit and clean reinstall, for pnpm, yarn, npm and bun.
 
 ## Settings
@@ -46,7 +47,7 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 </picture>
 
 - **Projects.** Add a folder with the + button, or drop folders on the window. Each project has its Node version, toolkit, custom commands, groups and `package.json` scripts.
-- **General.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDec from any app, crash notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
+- **General.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDec from any app, crash and long-task notifications on or off, a light, dark or system theme, the terminal font size, and Check for Updates.
 
 ## Install
 

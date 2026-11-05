@@ -7,7 +7,7 @@ use std::{
     process::Command,
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const SCROLLBACK: usize = 1 << 20;
@@ -48,6 +48,9 @@ pub struct SessionView {
     pub command: String,
     pub status: Status,
     pub code: Option<i32>,
+    /// When the current run started and ended, in milliseconds since the epoch.
+    pub started_at: u64,
+    pub ended_at: Option<u64>,
     pub url: Option<String>,
     pub busy_port: Option<u16>,
     /// How long a crashed keep-alive script waits before it restarts, in seconds.
@@ -77,6 +80,8 @@ struct Session {
     pid: u32,
     /// Bumped on restart so the old process's threads can't touch the new run.
     run: u32,
+    started_at: u64,
+    ended_at: Option<u64>,
     scrollback: Vec<u8>,
     pty: Option<Pty>,
     /// Ctrl-C was typed in the terminal, so ending now is the user's doing, not a crash.
@@ -95,6 +100,8 @@ impl Session {
             command: self.spec.command.clone(),
             status: self.status,
             code: self.code,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
             url: self.url.clone(),
             busy_port: self.busy_port,
             restart_in: self.restart_in,
@@ -102,7 +109,12 @@ impl Session {
     }
 }
 
+fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
 type Sink = Box<dyn Fn(&[u8]) + Send>;
+type OnExit = Box<dyn Fn(&SessionView, bool) + Send + Sync>;
 
 #[derive(Default)]
 struct Inner {
@@ -120,16 +132,13 @@ pub struct Sessions {
     inner: Mutex<Inner>,
     /// Called with no lock held, whenever anything in `list()` changes.
     on_change: Box<dyn Fn() + Send + Sync>,
-    /// Called with no lock held, when a script ends with an error nobody asked for.
-    on_failure: Box<dyn Fn(&SessionView) + Send + Sync>,
+    /// Called with no lock held, when a run ends on its own rather than being stopped, with whether it failed.
+    on_exit: OnExit,
 }
 
 impl Sessions {
-    pub fn new(
-        on_change: Box<dyn Fn() + Send + Sync>,
-        on_failure: Box<dyn Fn(&SessionView) + Send + Sync>,
-    ) -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::default(), on_change, on_failure })
+    pub fn new(on_change: Box<dyn Fn() + Send + Sync>, on_exit: OnExit) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::default(), on_change, on_exit })
     }
 
     pub fn list(&self) -> Vec<SessionView> {
@@ -186,6 +195,8 @@ impl Sessions {
             busy_port: None,
             pid,
             run,
+            started_at: now_ms(),
+            ended_at: None,
             scrollback,
             pty,
             interrupted: false,
@@ -204,24 +215,26 @@ impl Sessions {
             let started = Instant::now();
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
             let mut inner = this.inner.lock().unwrap();
-            let (mut failed, mut restart) = (None, None);
+            let (mut exited, mut restart) = (None, None);
             if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
                 let stopped = s.status == Status::Stopping || s.interrupted;
                 s.status = if stopped { Status::Stopped } else { Status::Exited };
                 s.code = code;
+                s.ended_at = Some(now_ms());
                 s.pty = None; // hangs up anything left behind in the terminal
                 let crashed = !stopped && code.is_some_and(|c| c != 0);
                 if crashed && s.spec.keep_alive {
                     s.restart_in = backoff(waited, started.elapsed());
                 }
                 // A keep-alive script says once that it's restarting, and once more if it gives up.
-                failed = (crashed && s.restart_in.is_none_or(|wait| wait == 1)).then(|| s.view(id));
+                let quiet = crashed && s.restart_in.is_some_and(|wait| wait != 1);
+                exited = (!stopped && !quiet).then(|| (s.view(id), crashed));
                 restart = s.restart_in.map(|wait| (wait, s.spec.clone()));
             }
             drop(inner);
             (this.on_change)();
-            if let Some(session) = failed {
-                (this.on_failure)(&session);
+            if let Some((session, failed)) = exited {
+                (this.on_exit)(&session, failed);
             }
             let Some((wait, spec)) = restart else { return };
             thread::sleep(BACKOFF_STEP * wait);
@@ -694,14 +707,18 @@ mod tests {
     }
 
     fn new_sessions() -> Arc<Sessions> {
-        Sessions::new(Box::new(|| {}), Box::new(|_| {}))
+        Sessions::new(Box::new(|| {}), Box::new(|_, _| {}))
     }
 
     #[test]
     fn reports_a_crash_but_not_a_clean_exit_or_a_stop_the_user_asked_for() {
         let failures = Arc::new(Mutex::new(Vec::new()));
         let seen = failures.clone();
-        let report = move |s: &SessionView| seen.lock().unwrap().push((s.label.clone(), s.code));
+        let report = move |s: &SessionView, failed: bool| {
+            if failed {
+                seen.lock().unwrap().push((s.label.clone(), s.code));
+            }
+        };
         let sessions = Sessions::new(Box::new(|| {}), Box::new(report));
 
         let clean = sessions.start(spec("exit 0")).unwrap();
@@ -728,6 +745,26 @@ mod tests {
         sessions.shutdown(); // last, since nothing starts once quitting
         wait_for("quit", || view(&sessions, quit).status == Status::Stopped);
         assert_eq!(*failures.lock().unwrap(), [("boom".to_string(), Some(7))]);
+    }
+
+    #[test]
+    fn reports_a_clean_exit_with_its_start_and_end_but_not_a_stop() {
+        let exits = Arc::new(Mutex::new(Vec::new()));
+        let seen = exits.clone();
+        let report = move |s: &SessionView, failed: bool| seen.lock().unwrap().push((s.clone(), failed));
+        let sessions = Sessions::new(Box::new(|| {}), Box::new(report));
+
+        let stopped = sessions.start(spec("sleep 30")).unwrap();
+        sessions.stop(stopped);
+        wait_for("stop", || view(&sessions, stopped).status == Status::Stopped);
+
+        let id = sessions.start(spec("sleep 1")).unwrap();
+        assert_eq!(view(&sessions, id).ended_at, None);
+        wait_for("exit", || !exits.lock().unwrap().is_empty());
+        let exits = exits.lock().unwrap();
+        let (session, failed) = &exits[0];
+        assert_eq!((exits.len(), session.id, *failed), (1, id, false));
+        assert!(session.ended_at.unwrap() >= session.started_at + 1000);
     }
 
     #[test]
@@ -776,6 +813,7 @@ mod tests {
         let sessions = new_sessions();
         let id = sessions.start(spec("echo run=$$; sleep 60")).unwrap();
         let first = printed_pid(&sessions, id, "run=");
+        let started = view(&sessions, id).started_at;
         sessions.restart(id).unwrap();
         wait_for("second run", || {
             view(&sessions, id).status == Status::Running
@@ -783,6 +821,8 @@ mod tests {
                 && printed_pid(&sessions, id, "run=") != first
         });
         assert_eq!(output(&sessions, id).matches("run=").count(), 1);
+        let second = view(&sessions, id);
+        assert!(second.started_at > started && second.ended_at.is_none());
         sessions.stop(id);
         wait_for("stop", || view(&sessions, id).status == Status::Stopped);
     }
@@ -791,7 +831,12 @@ mod tests {
     fn with_notice(then: impl Fn(&Arc<Sessions>, &SessionView) + Send + Sync + 'static) -> Arc<Sessions> {
         let slot = Arc::new(std::sync::OnceLock::<Arc<Sessions>>::new());
         let handle = slot.clone();
-        let sessions = Sessions::new(Box::new(|| {}), Box::new(move |s: &SessionView| then(handle.get().unwrap(), s)));
+        let notice = move |s: &SessionView, failed: bool| {
+            if failed {
+                then(handle.get().unwrap(), s);
+            }
+        };
+        let sessions = Sessions::new(Box::new(|| {}), Box::new(notice));
         let _ = slot.set(sessions.clone());
         sessions
     }

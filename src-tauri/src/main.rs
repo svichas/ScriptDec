@@ -425,19 +425,46 @@ fn sessions_changed(app: &AppHandle) {
     }
 }
 
-fn script_failed(app: &AppHandle, session: &SessionView) {
+/// How long a clean run took, as "2m 3s", when it's long enough that you've likely looked away.
+fn long_task(code: Option<i32>, millis: u64) -> Option<String> {
+    let secs = millis / 1000;
+    (code == Some(0) && secs >= 30).then(|| match secs {
+        ..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
+        _ => format!("{}h {}m", secs / 3600, secs / 60 % 60),
+    })
+}
+
+/// The title and body for a run that ended on its own: a crash, or a long task finishing, each behind its own switch.
+fn notification(session: &SessionView, failed: bool, settings: &Settings) -> Option<(String, String)> {
+    let ran = session.ended_at.map_or(0, |end| end.saturating_sub(session.started_at));
+    match (failed, long_task(session.code, ran)) {
+        (true, _) if settings.notify_on_failure => {
+            // A keep-alive script's first crash; if it gives up, the plain notice follows.
+            let restarting = if session.restart_in.is_some() { ", restarting" } else { "" };
+            Some((
+                format!("{} failed", session.label),
+                format!("{}: exit code {}{restarting}", session.project, session.code.unwrap_or_default()),
+            ))
+        }
+        (false, Some(took)) if settings.notify_on_finish => {
+            Some((format!("{} finished in {took}", session.label), session.project.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// A crash, or a long task finishing. Stopped runs never get here.
+fn script_ended(app: &AppHandle, session: &SessionView, failed: bool) {
     // The output is already in front of them, and `pnpm outdated` exiting 1 isn't news.
     let watching = app.get_webview_window("terminal").is_some_and(|window| window.is_focused().unwrap_or(false));
-    if watching || !app.state::<App>().config.lock().unwrap().settings.notify_on_failure {
+    if watching {
         return;
     }
-    // A keep-alive script's first crash; if it gives up, the plain notice follows.
-    let restarting = if session.restart_in.is_some() { ", restarting" } else { "" };
-    let notification = app.notification().builder();
-    let _ = notification
-        .title(format!("{} failed", session.label))
-        .body(format!("{}: exit code {}{restarting}", session.project, session.code.unwrap_or_default()))
-        .show();
+    let settings = app.state::<App>().config.lock().unwrap().settings.clone();
+    if let Some((title, body)) = notification(session, failed, &settings) {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
 }
 
 // Only macOS tints template icons; a black glyph would vanish on a dark Windows taskbar.
@@ -504,13 +531,13 @@ fn main() {
             }
             let first_run = config.projects.is_empty();
             let settings = config.settings.clone();
-            let (changed, failed) = (app.handle().clone(), app.handle().clone());
+            let (changed, ended) = (app.handle().clone(), app.handle().clone());
             app.manage(App {
                 config: Mutex::new(config),
                 config_path,
                 sessions: Sessions::new(
                     Box::new(move || sessions_changed(&changed)),
-                    Box::new(move |session| script_failed(&failed, session)),
+                    Box::new(move |session, failed| script_ended(&ended, session, failed)),
                 ),
                 popover_hidden_at: Mutex::new(Instant::now()),
             });
@@ -599,6 +626,53 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn announces_clean_runs_of_30_seconds_or_more() {
+        assert_eq!(long_task(Some(0), 31_000).as_deref(), Some("31s"));
+        assert_eq!(long_task(Some(0), 123_400).as_deref(), Some("2m 3s"));
+        assert_eq!(long_task(Some(0), 3_725_000).as_deref(), Some("1h 2m"));
+        assert_eq!(long_task(Some(0), 29_999), None);
+        assert_eq!(long_task(Some(0), 5_000), None);
+        assert_eq!(long_task(Some(1), 60_000), None);
+        assert_eq!(long_task(None, 60_000), None);
+    }
+
+    #[test]
+    fn each_switch_silences_only_its_own_notification() {
+        let ended = |code: i32, secs: u64| SessionView {
+            id: 1,
+            project_id: "p".into(),
+            project: "web".into(),
+            label: "build".into(),
+            command: "pnpm build".into(),
+            status: Status::Exited,
+            code: Some(code),
+            started_at: 1_000,
+            ended_at: Some(1_000 + secs * 1000),
+            url: None,
+            busy_port: None,
+            restart_in: None,
+        };
+        let (long, short, crash) = (ended(0, 123), ended(0, 5), ended(1, 3));
+        let all = Settings::default();
+        let no_finish = Settings { notify_on_finish: false, ..Settings::default() };
+        let no_crash = Settings { notify_on_failure: false, ..Settings::default() };
+        let post = |s: &SessionView, settings| notification(s, s.code != Some(0), settings);
+        let title = |s: &SessionView, settings| post(s, settings).map(|(title, _)| title);
+
+        assert_eq!(post(&long, &all), Some(("build finished in 2m 3s".into(), "web".into())));
+        assert_eq!(post(&crash, &all), Some(("build failed".into(), "web: exit code 1".into())));
+        assert_eq!(post(&short, &all), None);
+        assert_eq!(title(&long, &no_finish), None);
+        assert_eq!(title(&crash, &no_finish).as_deref(), Some("build failed"));
+        assert_eq!(title(&long, &no_crash).as_deref(), Some("build finished in 2m 3s"));
+        assert_eq!(title(&crash, &no_crash), None);
+
+        let restarting = SessionView { restart_in: Some(1), ..crash.clone() };
+        let body = post(&restarting, &all).map(|(_, body)| body);
+        assert_eq!(body.as_deref(), Some("web: exit code 1, restarting"));
+    }
 
     #[test]
     fn opens_only_web_links() {
