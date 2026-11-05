@@ -307,6 +307,21 @@ fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Cmd+click on a link in the terminal. Unlike `open_url`, any host.
+#[tauri::command]
+fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+    // Script output can print any scheme, and file: or an app's own scheme could run something local.
+    if !is_web_link(&url) {
+        return Err(format!("Refusing to open {url}"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+fn is_web_link(url: &str) -> bool {
+    let scheme = url.split_once("://").map_or("", |(scheme, _)| scheme);
+    scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+}
+
 #[tauri::command]
 fn open_homepage(app: AppHandle) -> Result<(), String> {
     app.opener().open_url(HOMEPAGE, None::<&str>).map_err(|e| e.to_string())
@@ -532,6 +547,7 @@ fn main() {
             open_settings,
             open_terminal,
             open_url,
+            open_link,
             open_homepage,
             open_latest_release,
             update::check_for_update,
@@ -548,4 +564,21 @@ fn main() {
                 app.state::<App>().sessions.shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_only_web_links() {
+        assert!(is_web_link("https://example.com/docs?q=1#top"));
+        assert!(is_web_link("http://localhost:3000"));
+        assert!(is_web_link("HTTPS://EXAMPLE.COM"));
+        assert!(!is_web_link("file:///etc/passwd"));
+        assert!(!is_web_link("javascript:alert(1)//https://example.com"));
+        assert!(!is_web_link("vscode://file/Users/me/app.js"));
+        assert!(!is_web_link("ftp://example.com"));
+        assert!(!is_web_link("example.com"));
+    }
 }
