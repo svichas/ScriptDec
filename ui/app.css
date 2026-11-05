@@ -331,4 +331,11 @@ body.dropping::after {
 .tab { display: flex; align-items: center; gap: 6px; flex: none; max-width: 220px; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab:hover, .tab.active { background: var(--bg-3); }
 .tab.active { color: var(--fg); }
-#screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; }
+#screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; position: relative; }
+/* Above xterm's own layers, the highest of which is its scrollbar at 11 */
+.find { position: absolute; top: 8px; right: 22px; z-index: 12; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--line); }
+.find[hidden] { display: none; }
+.find input { width: 180px; padding: 3px 8px; background: var(--bg); }
+.find .count { min-width: 76px; padding: 0 6px; color: var(--fg-2); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.find .up .glyph { transform: rotate(-90deg); }
+.find .down .glyph { transform: rotate(90deg); }
