@@ -226,6 +226,7 @@ body.popover { background: transparent; overflow: hidden; }
 .project-head .glyph { color: var(--fg-2); transition: transform 0.12s; }
 .project-head.open .glyph { transform: rotate(90deg); }
 .hint { padding: 4px 12px 8px; color: var(--fg-2); font-size: 11px; }
+.hint.port { padding: 0 8px 8px 28px; } /* under its row's title */
 
 /* Settings */
 .settings { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
@@ -338,4 +339,5 @@ body.dropping::after {
 .tab { display: flex; align-items: center; gap: 6px; flex: none; max-width: 220px; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab:hover, .tab.active { background: var(--bg-3); }
 .tab.active { color: var(--fg); }
+#actions .warn { max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* leaves the tabs room in a narrow window */
 #screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; }

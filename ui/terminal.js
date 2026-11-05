@@ -1,4 +1,7 @@
-import { call, Channel, dotClass, h, iconButton, invoke, isLive, listen, statusText, urlLabel } from './shared.js';
+import {
+  call, Channel, dotClass, freePortButton, h, iconButton, invoke, isLive, listen, portOwners, portText, statusText,
+  urlLabel,
+} from './shared.js';
 
 const tabs = document.getElementById('tabs');
 const actions = document.getElementById('actions');
@@ -41,6 +44,9 @@ term.open(screen);
 
 let sessions = [];
 let active = null;
+let owners = new Map(); // session id → what holds its busy port
+let confirming = null; // the Free port button waiting for its second click
+const arm = (key) => { confirming = key; render(); };
 
 term.onData((data) => {
   if (active != null) invoke('send_input', { id: active, data });
@@ -75,7 +81,10 @@ function render() {
   }, h('span', { class: `dot ${dotClass(session)}` }), session.label)));
 
   const session = sessions.find((s) => s.id === active);
+  const busy = session?.busyPort && portText(session, owners.get(session.id));
   actions.replaceChildren(...(session ? [
+    busy && h('span', { class: 'warn', title: busy }, busy),
+    freePortButton(session, owners.get(session.id), confirming, arm),
     isLive(session) && session.url && h('button', {
       class: 'chip', title: `Open ${session.url}`, onClick: () => call('open_url', { url: session.url }),
     }, urlLabel(session.url)),
@@ -94,6 +103,8 @@ async function load() {
     if (sessions.length) await select(sessions[sessions.length - 1].id);
   }
   render();
+  owners = await portOwners(sessions); // lsof can take a moment, so this fills in after
+  if (owners.size) render();
 }
 
 listen('sessions-changed', load);

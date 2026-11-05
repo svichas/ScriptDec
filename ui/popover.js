@@ -1,6 +1,6 @@
 import {
-  call, dotClass, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel, runScript,
-  scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
+  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, missingLabel, nodeLabel,
+  portOwners, portText, runScript, scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
 } from './shared.js';
 import { updateBanner } from './update.js';
 
@@ -11,6 +11,9 @@ let sessions = [];
 let query = '';
 let cursor = 0;
 let results = [];
+let owners = new Map(); // session id → what holds its busy port
+let confirming = null; // the Free port button waiting for its second click
+const arm = (key) => { confirming = key; render(); };
 
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
@@ -67,6 +70,12 @@ function sessionRow(session) {
     live || session.restartIn // stopping a pending restart cancels it
       ? iconButton('stop', 'Stop', () => call('stop', { id: session.id }), 'danger')
       : iconButton('close', 'Dismiss', () => call('clear_session', { id: session.id })));
+}
+
+function portNotice(session) {
+  const owner = owners.get(session.id);
+  return session.busyPort && h('div', { class: 'hint inline port' },
+    h('span', { class: 'warn' }, portText(session, owner)), freePortButton(session, owner, confirming, arm));
 }
 
 function scriptRow(project, script, showProject, selected) {
@@ -178,7 +187,7 @@ function render() {
     sessions.length > 0 && h('div', { class: 'group-title' },
       h('span', { class: 'grow' }, `Scripts (${sessions.filter(isLive).length} running)`),
       live && h('button', { class: 'link', onClick: () => call('stop_all') }, 'Stop all')),
-    sessions.map(sessionRow),
+    sessions.map((session) => [sessionRow(session), portNotice(session)]),
     projects.map(projectBlock),
   ].flat(Infinity).filter(Boolean));
   list.scrollTop = scroll;
@@ -201,6 +210,8 @@ function onSearchKey(event) {
 async function loadSessions() {
   sessions = await invoke('list_sessions');
   render();
+  owners = await portOwners(sessions); // lsof can take a moment, so this fills in after
+  if (owners.size) render();
 }
 
 async function refresh() {
