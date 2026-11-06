@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod git;
 #[cfg(unix)]
 mod mcp;
 mod node;
@@ -13,6 +14,7 @@ use project::Scan;
 use serde::Serialize;
 use sessions::{SessionView, Sessions, Spec, Status};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -82,14 +84,18 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     app.dialog().file().blocking_pick_folder().map(|path| path.to_string())
 }
 
+fn new_project_id() -> String {
+    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    format!("{millis:x}")
+}
+
 #[tauri::command]
 fn add_project(state: State<App>, path: String) -> Result<Project, String> {
     let dir = Path::new(&path);
     let manifest = project::read_manifest(dir).map_err(|e| format!("Not a Node project: {e}"))?;
     let folder = dir.file_name().map(|n| n.to_string_lossy().into_owned());
-    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let project = Project {
-        id: format!("{millis:x}"),
+        id: new_project_id(),
         name: folder.or(manifest["name"].as_str().map(String::from)).unwrap_or_else(|| path.clone()),
         path,
         ..Default::default()
@@ -145,6 +151,167 @@ async fn edit_script(
         project::move_pin(&mut project.keep_alive, &old_key, new_key);
         Ok(())
     })
+}
+
+/// Git in a project's folder. Its hooks get the project's Node, as its scripts do.
+fn project_git(state: &App, id: &str) -> Result<(Project, git::Git), String> {
+    let project = state.project(id)?;
+    let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
+    let git = git::Git::new(&project.path, node.resolved.as_deref().and_then(node::bin_dir));
+    Ok((project, git))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+}
+
+/// Each project's branch and changes, for the menu bar. Projects outside a repository aren't in it.
+#[tauri::command]
+async fn git_overview(app: AppHandle) -> HashMap<String, git::Summary> {
+    let projects = app.state::<App>().config.lock().unwrap().projects.clone();
+    std::thread::scope(|scope| {
+        let reads: Vec<_> = projects
+            .iter()
+            .filter(|project| git::is_repo(Path::new(&project.path)))
+            .map(|project| scope.spawn(move || (project.id.clone(), git::Git::new(&project.path, None).status())))
+            .collect();
+        reads
+            .into_iter()
+            .filter_map(|read| match read.join() {
+                Ok((id, Ok(status))) => Some((id, status.summary)),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+/// A project's repository, with the projects in its worktrees; None when the project isn't in one.
+#[tauri::command]
+async fn git_repo(app: AppHandle, project_id: String) -> Result<Option<git::Repo>, String> {
+    let state = app.state::<App>();
+    let project = state.project(&project_id)?;
+    if !git::is_repo(Path::new(&project.path)) {
+        return Ok(None);
+    }
+    let mut repo = git::Git::new(&project.path, None).repo()?;
+    let projects = state.config.lock().unwrap().projects.clone();
+    for tree in &mut repo.worktrees {
+        let dir = in_worktree(&tree.path, &repo.prefix);
+        tree.project = projects.iter().find(|p| same_dir(Path::new(&p.path), &dir)).map(|p| p.id.clone());
+    }
+    Ok(Some(repo))
+}
+
+/// The folder at `prefix` in a worktree, like `apps/web/`. Through components, so there's no trailing slash.
+fn in_worktree(tree: &str, prefix: &str) -> PathBuf {
+    Path::new(tree).join(prefix).components().collect()
+}
+
+#[tauri::command]
+async fn git_switch(app: AppHandle, project_id: String, branch: String) -> Result<(), String> {
+    project_git(&app.state::<App>(), &project_id)?.1.switch(&branch)
+}
+
+/// `paths` are the ticked files, from the top of the repository.
+#[tauri::command]
+async fn git_commit(app: AppHandle, project_id: String, message: String, paths: Vec<String>) -> Result<(), String> {
+    project_git(&app.state::<App>(), &project_id)?.1.commit(&message, &paths)
+}
+
+/// Fetch, pull or push.
+#[tauri::command]
+async fn git_sync(app: AppHandle, project_id: String, action: String) -> Result<(), String> {
+    let (_, git) = project_git(&app.state::<App>(), &project_id)?;
+    match action.as_str() {
+        "fetch" => git.fetch(),
+        "pull" => git.pull(),
+        "push" => git.push(),
+        _ => Err(format!("Unknown git action {action}")),
+    }
+}
+
+/// Checks a branch out in a new worktree beside the repository, and adds that as a project.
+#[tauri::command]
+async fn git_add_worktree(
+    app: AppHandle,
+    project_id: String,
+    branch: String,
+    base: Option<String>,
+) -> Result<Project, String> {
+    let state = app.state::<App>();
+    let (project, git) = project_git(&state, &project_id)?;
+    let prefix = git.prefix()?;
+    let (dir, branch) = git.add_worktree(&branch, base.as_deref())?;
+    worktree_project(&state, &project, &in_worktree(&dir.to_string_lossy(), &prefix), &branch)
+        .map_err(|e| format!("Made the worktree in {}, but it wasn't added: {e}", dir.display()))
+}
+
+/// The project in another worktree of a project's repository, added now if it isn't one yet.
+#[tauri::command]
+async fn git_open_worktree(app: AppHandle, project_id: String, path: String) -> Result<Project, String> {
+    let state = app.state::<App>();
+    let (project, git) = project_git(&state, &project_id)?;
+    let trees = git.worktrees()?;
+    let tree = trees.iter().find(|tree| same_dir(Path::new(&tree.path), Path::new(&path)));
+    let tree = tree.ok_or("That worktree is gone")?;
+    let folder = Path::new(&tree.path).file_name().map(|name| name.to_string_lossy().into_owned());
+    let name = tree.branch.clone().or(folder).unwrap_or_default();
+    worktree_project(&state, &project, &in_worktree(&tree.path, &git.prefix()?), &name)
+}
+
+/// The project in `dir`, or a new one there with `source`'s settings: Node version, custom scripts, pins and
+/// groups. It's named after `source` and `branch`, like "web · feature-x".
+fn worktree_project(state: &App, source: &Project, dir: &Path, branch: &str) -> Result<Project, String> {
+    let projects = state.config.lock().unwrap().projects.clone();
+    if let Some(found) = projects.into_iter().find(|p| same_dir(Path::new(&p.path), dir)) {
+        return Ok(found);
+    }
+    project::read_manifest(dir).map_err(|e| format!("Not a Node project: {e}"))?;
+    // From "web · fix", another worktree's project, too.
+    let base = source.name.split(" · ").next().unwrap_or(&source.name);
+    let project = Project {
+        id: new_project_id(),
+        name: format!("{base} · {branch}"),
+        path: dir.to_string_lossy().into_owned(),
+        ..source.clone()
+    };
+    state.edit(|config| {
+        config.projects.push(project.clone());
+        Ok(())
+    })?;
+    Ok(project)
+}
+
+/// Deletes a worktree's folder and removes the projects in it. Not while one of their scripts runs.
+#[tauri::command]
+async fn git_remove_worktree(app: AppHandle, project_id: String, path: String) -> Result<(), String> {
+    let state = app.state::<App>();
+    let (_, git) = project_git(&state, &project_id)?;
+    let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let tree = real(Path::new(&path));
+    let projects = state.config.lock().unwrap().projects.clone();
+    let inside: Vec<String> =
+        projects.into_iter().filter(|p| real(Path::new(&p.path)).starts_with(&tree)).map(|p| p.id).collect();
+    // A crashed script waiting to restart counts: it would start in a deleted folder.
+    let live = |s: &SessionView| matches!(s.status, Status::Running | Status::Stopping) || s.restart_in.is_some();
+    let running = state.sessions.list().iter().filter(|s| live(s) && inside.contains(&s.project_id)).count();
+    if running > 0 {
+        let scripts = if running == 1 { "script" } else { "scripts" };
+        return Err(format!("Stop the {running} {scripts} running in it first"));
+    }
+    git.remove_worktree(&path)?;
+    state.edit(|config| {
+        config.projects.retain(|p| !inside.contains(&p.id));
+        Ok(())
+    })
+}
+
+/// Clones a repository into a new folder in `parent` and adds it as a project.
+#[tauri::command]
+async fn git_clone(app: AppHandle, url: String, parent: String) -> Result<Project, String> {
+    let dir = git::clone(&url, Path::new(&parent))?;
+    let added = add_project(app.state(), dir.to_string_lossy().into_owned());
+    added.map_err(|e| format!("Cloned into {}, but it wasn't added: {e}", dir.display()))
 }
 
 #[tauri::command]
@@ -307,10 +474,14 @@ fn show_window(app: &AppHandle, label: &str, url: String, title: &str, size: (f6
     window.show().and_then(|_| window.set_focus()).map_err(|e| e.to_string())
 }
 
-/// Async: creating a window from a sync command deadlocks on Windows.
+/// Async: creating a window from a sync command deadlocks on Windows. `project` is the page it opens on.
 #[tauri::command]
-async fn open_settings(app: AppHandle) -> Result<(), String> {
-    show_window(&app, "settings", "settings.html".into(), "ScriptDeck", (860.0, 620.0))
+async fn open_settings(app: AppHandle, project: Option<String>) -> Result<(), String> {
+    let url = project.as_ref().map_or("settings.html".into(), |id| format!("settings.html?project={id}"));
+    show_window(&app, "settings", url, "ScriptDeck", (860.0, 620.0))?;
+    // The URL only counts for a new window.
+    let Some(id) = project else { return Ok(()) };
+    app.emit_to("settings", "select-project", id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -510,7 +681,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_popover(app),
             "settings" => {
                 let app = app.clone();
-                tauri::async_runtime::spawn(async move { open_settings(app).await });
+                tauri::async_runtime::spawn(async move { open_settings(app, None).await });
             }
             "stop_all" => app.state::<App>().sessions.stop_all(),
             "quit" => app.exit(0),
@@ -569,6 +740,8 @@ fn main() {
                 popover_hidden_at: Mutex::new(Instant::now()),
             });
             show_in_dock(app.handle(), false);
+            // Asked once, now, so the menu bar's first look at git doesn't wait for the login shell.
+            std::thread::spawn(git::login_path);
             build_tray(app.handle())?;
             app.set_theme(settings.theme);
             if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
@@ -596,7 +769,7 @@ fn main() {
             }
             if first_run {
                 let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move { open_settings(handle).await });
+                tauri::async_runtime::spawn(async move { open_settings(handle, None).await });
             }
             Ok(())
         })
@@ -625,6 +798,15 @@ fn main() {
             remove_project,
             update_project,
             edit_script,
+            git_overview,
+            git_repo,
+            git_switch,
+            git_commit,
+            git_sync,
+            git_add_worktree,
+            git_open_worktree,
+            git_remove_worktree,
+            git_clone,
             login_item,
             set_login_item,
             settings,

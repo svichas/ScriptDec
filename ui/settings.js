@@ -2,10 +2,21 @@ import {
   call, groupScripts, h, icon, iconButton, invoke, listen, listProjects, MAC, missingLabel, runScript, saveProject,
   scriptLabel, scriptsOf, shortPackage, toast, togglePin,
 } from './shared.js';
+import { branchName, branchPicker, pullLabel, pushLabel, syncText } from './git.js';
 import { checkForUpdates, updateBanner } from './update.js';
 
 const MAX_ROWS = 80;
 const GENERAL = 'general';
+const CLONE = 'clone';
+// Each change's letter, what it means and its colour.
+const KINDS = {
+  A: ['A', 'Added', 'ok'],
+  '?': ['A', 'New, not tracked by git yet', 'ok'],
+  M: ['M', 'Modified', 'warn'],
+  D: ['D', 'Deleted', 'bad'],
+  R: ['R', 'Renamed', 'accent'],
+  U: ['!', 'Conflicted: resolve it in your editor, then commit', 'bad'],
+};
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20];
 const KEY_SYMBOLS = { Control: '⌃', Alt: '⌥', Shift: '⇧', Super: '⌘' };
 
@@ -13,7 +24,8 @@ let projects = [];
 let versions = [];
 let settings = {};
 let version = '';
-let selectedId = null; // a project's id, or GENERAL
+// A project's id, GENERAL or CLONE. The menu bar can open the window on a project.
+let selectedId = new URLSearchParams(location.search).get('project');
 let filter = '';
 let confirming = null; // the destructive action waiting for its second click
 let editing = null; // the package.json script being changed: { key, package, old, name, body }; old is null for a new one
@@ -22,6 +34,29 @@ let launchAtLogin = false;
 let checking = false; // Check for Updates is waiting on GitHub
 let upToDate = false; // and found nothing newer
 const mcpCommand = await invoke('mcp_command'); // null on Windows, where agents can't connect yet
+let repo = null; // the selected project's git repository, null outside one
+let repoFor = null; // the project `repo` is for
+let gitBusy = null; // the git command running, as its button's label
+let gitError = null; // what the last one said when it failed, and where: { text, at }
+let picker = null; // the open branch menu
+let unchecked = new Set(); // changed files left out of the next commit
+let cloneParent = null; // the folder chosen to clone into
+let worktreeBase = null; // where a new worktree's branch starts; null is the current branch
+// Kept across renders, with their text and focus.
+const commitInput = h('textarea', {
+  placeholder: 'Commit message', 'aria-label': 'Commit message', rows: 3, spellcheck: 'true',
+  onKeydown: (event) => {
+    if (event.key === 'Enter' && (MAC ? event.metaKey : event.ctrlKey)) body.querySelector('.commit .primary')?.click();
+  },
+});
+const cloneInput = h('input', {
+  class: 'mono url', placeholder: 'https://github.com/owner/repo, or owner/repo', 'aria-label': 'Repository URL',
+  spellcheck: 'false', autocomplete: 'off',
+});
+const worktreeInput = h('input', {
+  placeholder: 'New or existing branch', 'aria-label': 'Branch for the new worktree', list: 'worktree-branches',
+  spellcheck: 'false', autocomplete: 'off',
+});
 
 const sidebar = h('nav', { class: 'sidebar', 'aria-label': 'Sections', 'data-tauri-drag-region': 'deep' });
 const head = h('header', { class: 'page-head', 'data-tauri-drag-region': 'deep' });
@@ -35,8 +70,63 @@ async function load() {
     listProjects(), invoke('node_versions'), invoke('login_item'), invoke('settings'),
     window.__TAURI__.app.getVersion(),
   ]);
-  if (selectedId !== GENERAL && !selected()) selectedId = projects[0]?.id ?? null;
+  if (selectedId !== GENERAL && selectedId !== CLONE && !selected()) selectedId = projects[0]?.id ?? null;
   render();
+  await loadRepo();
+}
+
+/** The selected project's repository, for its Git sections. */
+async function loadRepo() {
+  const id = selected()?.id;
+  const editor = editing;
+  const found = id && await invoke('git_repo', { projectId: id }).catch((error) => {
+    gitError = { text: String(error), at: 'branch' };
+    return null;
+  });
+  if (id !== selected()?.id) return; // another project was picked meanwhile
+  if (repoFor !== id) {
+    // Another project's page: its own message, files and worktree branch.
+    commitInput.value = '';
+    worktreeInput.value = '';
+    worktreeBase = null;
+    unchecked = new Set();
+    picker = null;
+  }
+  [repo, repoFor] = [found ?? null, id];
+  // Not while a script editor opened meanwhile: rebuilding it would take the cursor out. The next render shows this.
+  if (editing === editor) render();
+}
+
+function select(id) {
+  selectedId = id;
+  filter = '';
+  confirming = null;
+  editing = null;
+  recording = false;
+  picker = null;
+  gitError = null;
+  body.scrollTop = 0;
+  render();
+  loadRepo();
+}
+
+/**
+ * A git command: one at a time, its failure shown in the section it came from, `at`. Resolves to whether it worked.
+ */
+async function gitAction(at, label, run) {
+  gitBusy = label;
+  gitError = null;
+  render();
+  try {
+    await run();
+    return true;
+  } catch (error) {
+    gitError = { text: String(error), at };
+    return false;
+  } finally {
+    gitBusy = null;
+    await load();
+  }
 }
 
 /** Folders from the picker, or dropped on the window. */
@@ -442,6 +532,198 @@ function scriptsSection(project) {
     results);
 }
 
+/** The last git failure, when it came from the section `at`. */
+function errorBox(at) {
+  return gitError?.at === at && h('div', { class: 'git-error', role: 'alert' },
+    h('pre', {}, gitError.text),
+    iconButton('close', 'Dismiss', () => { gitError = null; render(); }));
+}
+
+/** A button for a git command from the section `at`; it shows `busy` while it runs. */
+function gitButton(at, label, busy, run, extra = '') {
+  return h('button', {
+    class: `btn ${extra}`, disabled: gitBusy != null, onClick: () => gitAction(at, busy, run),
+  }, gitBusy === busy ? busy : label);
+}
+
+function togglePicker(project) {
+  picker = picker ? null : branchPicker(project, {
+    onSwitched: () => { picker = null; load(); },
+    onWorktree: (opened) => { picker = null; load().then(() => select(opened.id)); },
+    onClose: () => { picker = null; render(); },
+  });
+  render();
+  picker?.focus();
+}
+
+function branchSection(project) {
+  const { status } = repo;
+  const sync = (action, label, busy) => gitButton('branch', label, busy,
+    () => invoke('git_sync', { projectId: project.id, action }));
+  return h('section', {},
+    h('h2', {}, 'Git'),
+    h('div', { class: 'group' },
+      h('div', { class: 'setting' },
+        icon('branch'),
+        settingText(branchName(status), syncText(status) || null),
+        h('div', { class: 'inline' },
+          h('button', { class: 'btn', 'aria-expanded': String(!!picker), onClick: () => togglePicker(project) },
+            'Switch Branch'),
+          sync('fetch', 'Fetch', 'Fetching…'),
+          pullLabel(status) && sync('pull', pullLabel(status), 'Pulling…'),
+          status.branch && sync('push', pushLabel(status), 'Pushing…'))),
+      picker && h('div', { class: 'picker-box' }, picker.el)),
+    errorBox('branch'));
+}
+
+/** The file's name, then its folder, dimmed: the name is what you look for. */
+function fileLabel(path) {
+  const cut = path.replace(/\/$/, '').lastIndexOf('/') + 1;
+  return [h('span', { class: 'file-name' }, path.slice(cut)), cut > 0 && h('span', { class: 'dir' }, path.slice(0, cut - 1))];
+}
+
+function changesSection(project) {
+  const { files } = repo.status;
+  if (!files.length) {
+    return h('section', {}, h('h2', {}, 'Changes'), h('p', { class: 'note' }, 'No uncommitted changes.'));
+  }
+  const chosen = files.filter((file) => !unchecked.has(file.path));
+  const all = h('input', {
+    type: 'checkbox', checked: chosen.length === files.length, 'aria-label': 'Commit every file',
+    onChange: (event) => { unchecked = new Set(event.target.checked ? [] : files.map((f) => f.path)); render(); },
+  });
+  all.indeterminate = chosen.length > 0 && chosen.length < files.length;
+  const rows = files.slice(0, MAX_ROWS).map((file) => {
+    const [letter, meaning, colour] = KINDS[file.kind] ?? KINDS.M;
+    return h('label', { class: 'change', title: file.from ? `${meaning}: ${file.from} → ${file.path}` : `${meaning}: ${file.path}` },
+      h('input', {
+        type: 'checkbox', checked: !unchecked.has(file.path),
+        onChange: (event) => { unchecked[event.target.checked ? 'delete' : 'add'](file.path); render(); },
+      }),
+      h('span', { class: `kind ${colour}`, 'aria-label': meaning }, letter),
+      h('span', { class: 'file' }, fileLabel(file.path)));
+  });
+  // The ticked files, by name: files that turned up after this list loaded don't go in unseen.
+  const commit = (push) => async () => {
+    const paths = chosen.map((file) => file.path);
+    await invoke('git_commit', { projectId: project.id, message: commitInput.value, paths });
+    commitInput.value = '';
+    unchecked = new Set();
+    if (push) await invoke('git_sync', { projectId: project.id, action: 'push' });
+  };
+  const count = `${chosen.length} file${chosen.length === 1 ? '' : 's'}`;
+  const commitButton = gitButton('changes', `Commit ${count}`, 'Committing…', commit(false), 'primary');
+  const pushButton = repo.status.branch
+    && gitButton('changes', 'Commit & Push', 'Committing and pushing…', commit(true));
+  for (const button of [commitButton, pushButton]) if (button && !chosen.length) button.disabled = true;
+  return h('section', {},
+    h('div', { class: 'section-head' },
+      h('h2', {}, `Changes (${files.length})`),
+      h('label', { class: 'inline all' }, all, 'All')),
+    h('div', { class: 'group changes' },
+      h('div', { class: 'files' }, rows,
+        files.length > MAX_ROWS && h('p', { class: 'note' }, `And ${files.length - MAX_ROWS} more, all committed unless you untick All.`)),
+      h('div', { class: 'commit' },
+        commitInput,
+        h('div', { class: 'inline' }, commitButton, pushButton,
+          h('span', { class: 'note' }, MAC ? '⌘↩ commits' : 'Ctrl+Enter commits')))),
+    errorBox('changes'));
+}
+
+function worktreesSection(project) {
+  const open = (tree) => async () => {
+    let opened;
+    const done = await gitAction('worktrees', 'Adding…', async () => {
+      opened = await invoke('git_open_worktree', { projectId: project.id, path: tree.path });
+    });
+    if (done) select(opened.id);
+  };
+  const rows = repo.worktrees.map((tree) => {
+    const added = projects.find((p) => p.id === tree.project);
+    const removing = `worktree:${tree.path}`;
+    return h('div', { class: 'setting' },
+      icon('folder'),
+      h('div', { class: 'meta' },
+        h('div', { class: 'title' }, tree.branch ?? 'detached HEAD', tree.main && h('span', { class: 'tag' }, 'main')),
+        h('div', { class: 'sub path', title: tree.path }, tree.path)),
+      h('div', { class: 'inline' },
+        tree.current
+          ? h('span', { class: 'note' }, 'This project')
+          : added
+            ? h('button', { class: 'btn', onClick: () => select(added.id) }, 'Open')
+            : gitButton('worktrees', 'Add to ScriptDeck', 'Adding…', open(tree)),
+        !tree.main && confirmButton(removing, 'Remove', 'Delete its folder?',
+          () => gitAction('worktrees', 'Removing…',
+            () => invoke('git_remove_worktree', { projectId: project.id, path: tree.path })))));
+  });
+
+  const base = h('select', {
+    'aria-label': 'Start a new branch from', title: 'Where a new branch starts',
+    onChange: (event) => { worktreeBase = event.target.value; },
+  },
+  h('option', { value: '' }, 'HEAD'),
+  repo.branches.map((b) => h('option', { value: b.name }, b.name)));
+  base.value = worktreeBase ?? repo.status.branch ?? '';
+  const create = async (event) => {
+    event.preventDefault();
+    let opened;
+    const done = await gitAction('worktrees', 'Creating…', async () => {
+      opened = await invoke('git_add_worktree', {
+        projectId: project.id, branch: worktreeInput.value, base: base.value || null,
+      });
+    });
+    if (!done) return;
+    worktreeInput.value = '';
+    worktreeBase = null;
+    select(opened.id);
+  };
+  const main = repo.worktrees.find((tree) => tree.main)?.path.split(/[\\/]/).pop() ?? 'the repository';
+  return h('section', {},
+    h('h2', {}, `Worktrees (${repo.worktrees.length})`),
+    h('div', { class: 'group' }, rows),
+    h('form', { class: 'inline worktree-form', onSubmit: create },
+      worktreeInput,
+      h('datalist', { id: 'worktree-branches' }, repo.branches.map((b) => h('option', { value: b.name }))),
+      h('span', { class: 'note' }, 'from'),
+      base,
+      h('button', { class: 'btn', disabled: gitBusy != null }, gitBusy === 'Creating…' ? 'Creating…' : 'New Worktree')),
+    errorBox('worktrees'),
+    h('p', { class: 'note' },
+      `A worktree is another folder with its own branch checked out, so two branches can run side by side. New ones go beside ${main} and open as projects with this one's settings. Run Install in them first.`));
+}
+
+function gitSections(project) {
+  if (repoFor !== project.id) return [];
+  if (!repo) return gitError?.at === 'branch' ? [h('section', {}, h('h2', {}, 'Git'), errorBox('branch'))] : [];
+  return [branchSection(project), changesSection(project), worktreesSection(project)];
+}
+
+function renderClone() {
+  const parent = cloneParent ?? projects.at(-1)?.path.replace(/[\\/][^\\/]*$/, '') ?? null;
+  const choose = async () => {
+    const path = await call('pick_folder');
+    if (path) { cloneParent = path; render(); }
+  };
+  const clone = async (event) => {
+    event.preventDefault();
+    if (!parent) return choose();
+    let added;
+    const done = await gitAction('clone', 'Cloning…', async () => {
+      added = await invoke('git_clone', { url: cloneInput.value, parent });
+    });
+    if (done) { cloneInput.value = ''; select(added.id); }
+  };
+  head.replaceChildren(h('h1', {}, 'Clone a Repository'));
+  body.replaceChildren(h('form', { class: 'clone', onSubmit: clone },
+    group('Repository',
+      setting('URL', 'HTTPS or SSH, signed in as git is in your terminal.', cloneInput),
+      setting('Into', parent ?? 'Choose a folder', h('button', { class: 'btn', type: 'button', onClick: choose }, 'Choose…'))),
+    h('div', { class: 'inline actions' },
+      h('button', { class: 'btn primary', disabled: gitBusy != null }, gitBusy ?? 'Clone'),
+      h('span', { class: 'note' }, 'It gets a folder of its own in there, and opens as a project.')),
+    errorBox('clone')));
+}
+
 function renderProject(project) {
   const remove = async () => {
     await call('remove_project', { id: project.id });
@@ -461,46 +743,50 @@ function renderProject(project) {
       h('span', { class: 'path', title: project.path, 'data-tauri-drag-region': 'false' }, project.path),
       h('button', { class: 'link', onClick: () => call('reveal', { path: project.path }) }, 'Show in folder'),
       confirmButton('remove', 'Remove', 'Remove from ScriptDeck?', remove)));
+  // Git stays reachable when there's no package.json, say on a branch without one.
   body.replaceChildren(...(error
-    ? [h('p', { class: 'note warn' }, error)]
-    : [nodeSection(project), toolkitSection(project), customSection(project), groupsSection(project),
-      scriptsSection(project)]));
+    ? [h('p', { class: 'note warn' }, error), ...gitSections(project)]
+    : [nodeSection(project), toolkitSection(project), ...gitSections(project), customSection(project),
+      groupsSection(project), scriptsSection(project)]));
 }
 
 function navItem(id, glyph, label) {
   return h('button', {
     class: `item ${id === selectedId ? 'active' : ''}`,
     'aria-current': id === selectedId ? 'page' : false,
-    onClick: () => {
-      selectedId = id;
-      filter = '';
-      confirming = null;
-      editing = null;
-      recording = false;
-      body.scrollTop = 0;
-      render();
-    },
+    onClick: () => select(id),
   }, icon(glyph), h('span', { class: 'label' }, label));
 }
 
 function render() {
+  const focused = document.activeElement; // kept if it survives the rebuild, like the commit message
   sidebar.replaceChildren(
     navItem(GENERAL, 'gear', 'General'),
-    h('div', { class: 'nav-title' }, h('span', {}, 'Projects'), iconButton('plus', 'Add project', addProject)),
+    h('div', { class: 'nav-title' },
+      h('span', {}, 'Projects'),
+      h('div', { class: 'tools' },
+        iconButton('download', 'Clone a repository', () => select(CLONE), selectedId === CLONE ? 'on' : ''),
+        iconButton('plus', 'Add project', addProject))),
     h('div', { class: 'projects' }, projects.map((project) => navItem(project.id, 'folder', project.name))),
     h('div', { class: 'foot' }, h('button', { class: 'btn', onClick: () => invoke('quit') }, 'Quit ScriptDeck')),
   );
   const project = selected();
   if (selectedId === GENERAL) renderGeneral();
+  else if (selectedId === CLONE) renderClone();
   else if (project) renderProject(project);
   else {
     head.replaceChildren(h('h1', {}, 'Welcome to ScriptDeck'));
     body.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'Add a folder with a package.json to get started.'),
-      h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),
+      h('div', { class: 'inline center' },
+        h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),
+        h('button', { class: 'btn', onClick: () => select(CLONE) }, 'Clone a repository')),
       h('p', { class: 'note' }, 'Or drop folders on this window.')));
   }
+  if (focused?.isConnected && focused !== document.activeElement) focused.focus();
 }
+
+listen('select-project', ({ payload }) => load().then(() => select(payload)));
 
 // Reloading rebuilds the page, which would knock the cursor out of an open script editor.
 window.addEventListener('focus', () => { if (!editing) load(); });

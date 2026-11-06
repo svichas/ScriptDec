@@ -3,6 +3,7 @@ import {
   nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
   usageLabel, withArgs,
 } from './shared.js';
+import { branchName, branchPicker, pullLabel, pushLabel, syncText } from './git.js';
 import { updateBanner } from './update.js';
 
 const MAX_RESULTS = 60;
@@ -17,6 +18,9 @@ let results = [];
 let owners = new Map(); // session id → what holds its busy port
 let confirming = null; // the Free port button waiting for its second click
 const arm = (key) => { confirming = key; render(); };
+let git = {}; // project id → its branch and changes, for projects in a git repository
+let picker = null; // the open branch menu, under its project: { id, el, focus }
+let syncing = null; // the pull or push running, as `${project id}:${action}`
 
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
@@ -200,6 +204,73 @@ function groupRow(project, group, showProject, selected) {
     idle.length > 0 && iconButton('play', 'Run group', () => startGroup(project, group), 'go'));
 }
 
+/** The project's branch, its uncommitted changes and what's left to push or pull; a click opens the branch menu. */
+function branchChip(project) {
+  const status = git[project.id];
+  if (!status) return null;
+  const sync = [status.ahead && `↑${status.ahead}`, status.behind && `↓${status.behind}`].filter(Boolean).join(' ');
+  const changes = status.changes && `${status.changes} uncommitted change${status.changes === 1 ? '' : 's'}`;
+  const about = [`On ${branchName(status)}`, changes, syncText(status)].filter(Boolean).join(' · ');
+  return h('button', {
+    class: `branch ${picker?.id === project.id ? 'open' : ''}`,
+    title: about,
+    'aria-label': `${about}. Switch branch`,
+    'aria-expanded': String(picker?.id === project.id),
+    onClick: (event) => { event.stopPropagation(); togglePicker(project); },
+  },
+  icon('branch'),
+  h('span', { class: 'name' }, branchName(status)),
+  status.changes > 0 && h('span', { class: 'dirty' }, String(status.changes)),
+  sync && h('span', { class: 'sync' }, sync));
+}
+
+function togglePicker(project) {
+  if (picker?.id === project.id) return closePicker();
+  picker = {
+    id: project.id,
+    ...branchPicker(project, {
+      onSwitched: () => { closePicker(); refresh(); },
+      // A branch checked out in another worktree: show that worktree's project, added now if it's new.
+      onWorktree: (opened) => {
+        closePicker();
+        if (collapsed.has(opened.id)) toggleCollapsed(opened.id);
+        refresh();
+      },
+      onClose: closePicker,
+    }),
+  };
+  render();
+  picker.focus();
+}
+
+function closePicker() {
+  picker = null;
+  render();
+  search.focus();
+}
+
+async function gitSync(project, action) {
+  syncing = `${project.id}:${action}`;
+  render();
+  await call('git_sync', { projectId: project.id, action }).catch(() => {});
+  syncing = null;
+  await refresh();
+}
+
+/** Under the branch menu: pull and push, and Settings for committing and worktrees. */
+function pickerFoot(project) {
+  const status = git[project.id];
+  const button = (action, label, busy) => h('button', {
+    class: 'btn', disabled: syncing != null, onClick: () => gitSync(project, action),
+  }, syncing === `${project.id}:${action}` ? busy : label);
+  const changes = status.changes && `Commit ${status.changes} file${status.changes === 1 ? '' : 's'}…`;
+  return h('div', { class: 'picker-foot' },
+    pullLabel(status) && button('pull', pullLabel(status), 'Pulling…'),
+    status.branch && button('push', pushLabel(status), 'Pushing…'),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'link', onClick: () => call('open_settings', { project: project.id }) }, changes || 'Worktrees…'));
+}
+
 function projectBlock(project) {
   const open = !collapsed.has(project.id);
   const all = scriptsOf(project);
@@ -208,10 +279,14 @@ function projectBlock(project) {
   const hidden = all.length - shown.length;
   const { error, pm, node } = project.scan;
   return [
-    h('button', { class: `project-head ${open ? 'open' : ''}`, onClick: () => toggleCollapsed(project.id) },
-      icon('chevron'),
-      h('span', { class: 'name' }, project.name),
+    // Not a button, as it holds the branch button; the toggle inside is what the keyboard reaches.
+    h('div', { class: `project-head ${open ? 'open' : ''}`, onClick: () => toggleCollapsed(project.id) },
+      h('button', { class: 'toggle', 'aria-expanded': String(open) },
+        icon('chevron'),
+        h('span', { class: 'name' }, project.name)),
+      branchChip(project),
       h('span', { class: `info ${node.wanted && !node.resolved ? 'warn' : ''}` }, error ? '' : `${pm} · ${nodeLabel(node)}`)),
+    picker?.id === project.id && git[project.id] && h('div', { class: 'picker-box' }, picker.el, pickerFoot(project)),
     open && error && h('div', { class: 'hint warn' }, error),
     open && project.groups.map((group) => groupRow(project, group, false, false)),
     open && shown.map((script) => scriptRow(project, script, false, false)),
@@ -238,8 +313,9 @@ function searchResults() {
 function render() {
   const scroll = list.scrollTop;
   tickers = [];
-  // Rebuilding the list detaches the arguments field, which drops its focus.
+  // Rebuilding the list detaches the arguments field and the branch menu, which drops their focus.
   if (document.activeElement === argsInput) queueMicrotask(() => argsInput.focus());
+  if (picker?.el.contains(document.activeElement)) queueMicrotask(() => picker?.focus());
   if (!projects.length) {
     list.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'No projects yet.'),
@@ -292,6 +368,8 @@ async function loadSessions() {
 async function refresh() {
   projects = await listProjects();
   await loadSessions();
+  git = await invoke('git_overview'); // a git status per project, so it fills in after
+  render();
 }
 
 async function loadUsage() {
@@ -314,4 +392,5 @@ window.addEventListener('focus', () => {
 window.addEventListener('blur', () => clearInterval(ticker));
 // Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
 window.addEventListener('blur', () => argsFor && closeArgs());
+window.addEventListener('blur', () => picker && closePicker());
 refresh();

@@ -50,8 +50,8 @@ body {
   -webkit-user-select: none;
   -webkit-font-smoothing: antialiased;
 }
-button, input, select { font: inherit; color: inherit; }
-input, select {
+button, input, select, textarea { font: inherit; color: inherit; }
+input, select, textarea {
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -60,7 +60,7 @@ input, select {
   -webkit-user-select: text;
 }
 input::placeholder { color: var(--fg-2); opacity: 0.8; }
-input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 button { background: none; border: 0; padding: 0; cursor: default; }
 button.icon, button.btn, .row, .item, .tab, .project-head { transition: background-color 0.12s, color 0.12s; }
@@ -150,6 +150,9 @@ button.btn.danger { color: var(--bad); }
   user-select: text;
   -webkit-user-select: text;
   z-index: 10;
+  white-space: pre-line; /* git's errors run to several lines */
+  max-height: 45vh;
+  overflow: auto;
 }
 
 /* The last row of the popover and of Settings, so it never covers the list */
@@ -214,19 +217,18 @@ body.popover { background: transparent; overflow: hidden; }
 .project-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  width: 100%;
+  gap: 6px;
   margin-top: 4px;
   padding: 6px 8px;
   border-radius: 8px;
-  text-align: left;
 }
 .project-head:hover { background: var(--bg-2); }
-.project-head .name { font-weight: 600; }
+.project-head .toggle { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; text-align: left; }
+.project-head .toggle .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .project-head .info { flex: 1; min-width: 0; text-align: right; color: var(--fg-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .project-head .info.warn { color: var(--warn); }
-.project-head .glyph { color: var(--fg-2); transition: transform 0.12s; }
-.project-head.open .glyph { transform: rotate(90deg); }
+.project-head .toggle .glyph { color: var(--fg-2); transition: transform 0.12s; }
+.project-head.open .toggle .glyph { transform: rotate(90deg); }
 .hint { padding: 4px 12px 8px; color: var(--fg-2); font-size: 11px; }
 .hint.port { padding: 0 8px 8px 28px; } /* under its row's title */
 .args { display: flex; align-items: center; gap: 8px; padding: 2px 8px 6px 28px; }
@@ -276,7 +278,7 @@ body.popover { background: transparent; overflow: hidden; }
 
 /* Settings: General */
 .group { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
-.group input, .group select { background: var(--bg); }
+.group input, .group select, .group textarea { background: var(--bg); }
 .setting { display: flex; align-items: center; gap: 16px; min-height: 50px; padding: 9px 14px; }
 .setting + .setting { border-top: 1px solid var(--line); }
 .setting .sub { margin-top: 1px; font-size: 12px; white-space: normal; }
@@ -317,6 +319,74 @@ body.dropping::after {
   opacity: 0.94;
   pointer-events: none;
 }
+
+/* Git: the branch chip and menu in the popover, and the Git sections and Clone page in Settings */
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  height: 20px;
+  padding: 0 7px 0 4px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.project-head:hover .branch { background: var(--bg-3); }
+.branch:hover, .branch.open { background: var(--bg-3); color: var(--fg); }
+.branch .glyph svg { width: 12px; height: 12px; }
+.branch .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch .dirty { display: inline-flex; align-items: center; gap: 2px; color: var(--warn); font-weight: 600; }
+.branch .dirty::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.branch .sync { white-space: nowrap; }
+.picker-box { margin: 2px 6px 8px 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow); overflow: hidden; }
+.group .picker-box { margin: 0 14px 12px; box-shadow: none; }
+.picker input { width: 100%; padding: 7px 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: var(--bg-2); }
+.picker-list { max-height: 216px; overflow-y: auto; padding: 4px; }
+.picker .row { min-height: 30px; padding: 2px 8px; }
+.picker .row .glyph { color: var(--fg-2); }
+.picker.busy { opacity: 0.6; pointer-events: none; }
+.picker .hint { padding: 8px; }
+.tag { flex: none; padding: 1px 6px; border-radius: 8px; background: var(--bg-3); color: var(--fg-2); font-size: 10px; font-weight: 600; }
+.picker-foot { display: flex; align-items: center; gap: 6px; padding: 6px; border-top: 1px solid var(--line); background: var(--bg-2); }
+.picker-foot .grow { flex: 1; }
+.picker-foot .btn { padding: 3px 10px; font-size: 12px; }
+.picker-foot .link { font-size: 12px; white-space: nowrap; }
+.setting > .glyph { color: var(--fg-2); }
+.setting .title .tag { margin-left: 6px; vertical-align: 1px; }
+.setting .sub.path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; -webkit-user-select: text; }
+.git-error { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--bad); border-radius: 8px; color: var(--bad); }
+.git-error pre { flex: 1; min-width: 0; max-height: 200px; margin: 4px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; user-select: text; -webkit-user-select: text; }
+.section-head .all { gap: 6px; font-size: 12px; color: var(--fg-2); }
+.section-head .all input, .change input { margin: 0; accent-color: var(--accent); }
+.changes .files { max-height: 300px; overflow-y: auto; padding: 4px 0; }
+.changes .files .note { padding: 4px 14px; }
+.change { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 2px 14px; }
+.change:hover { background: var(--bg-3); }
+.change .kind { flex: none; width: 12px; text-align: center; font: 700 11px ui-monospace, Menlo, Consolas, monospace; }
+.kind.ok { color: var(--ok); }
+.kind.warn { color: var(--warn); }
+.kind.bad { color: var(--bad); }
+.kind.accent { color: var(--accent); }
+.change .file { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.change .dir { margin-left: 8px; color: var(--fg-2); font-size: 12px; }
+.commit { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--line); }
+.commit textarea { width: 100%; min-height: 56px; resize: vertical; }
+.commit .note { margin: 0 0 0 auto; }
+.worktree-form { flex-wrap: nowrap; margin-top: 8px; }
+.worktree-form input { flex: 1; min-width: 0; }
+.worktree-form select { max-width: 180px; }
+.worktree-form .note { margin: 0; }
+.clone .url { width: 340px; max-width: 100%; }
+.clone section + .actions { margin-top: 14px; }
+.clone .actions .note { margin: 0; }
+.nav-title .tools { display: flex; gap: 2px; }
+button.icon.on { background: var(--bg-3); color: var(--fg); }
+.inline.center { justify-content: center; }
 
 /* Terminal: dark in both themes */
 .terminal-page {
