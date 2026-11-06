@@ -19,6 +19,8 @@ pub struct Settings {
     pub notify_on_failure: bool,
     /// When a script ends on its own, with exit 0, after 30 seconds or more.
     pub notify_on_finish: bool,
+    /// When a test script ends on its own, passed or failed, however long it took.
+    pub notify_on_tests: bool,
     /// None follows the system.
     pub theme: Option<Theme>,
     pub terminal_font_size: u8,
@@ -34,6 +36,7 @@ impl Default for Settings {
             shortcut: None,
             notify_on_failure: true,
             notify_on_finish: true,
+            notify_on_tests: true,
             theme: None,
             terminal_font_size: 12,
             reopen_scripts: false,
@@ -184,7 +187,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, r#"{"projects": []}"#).unwrap();
         let settings = load(&path).settings;
-        assert!(settings.notify_on_failure && settings.notify_on_finish);
+        assert!(settings.notify_on_failure && settings.notify_on_finish && settings.notify_on_tests);
         assert!(!settings.mcp);
         assert_eq!((settings.terminal_font_size, settings.theme, settings.shortcut), (12, None, None));
     }

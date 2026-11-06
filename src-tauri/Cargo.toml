@@ -25,6 +25,13 @@ tauri-plugin-updater = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Asks macOS whether ScriptDeck may notify, which the notification plugin can't; Tauri already builds the first three.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
+
 [profile.release]
 lto = true
 opt-level = "s"
