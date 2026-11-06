@@ -128,6 +128,12 @@
     .lede { max-width: 33em; margin: 24px 0 36px; color: var(--fg-2); font-size: clamp(1.1rem, 1.7vw, 1.3rem); line-height: 1.55; }
     .cta { display: flex; flex-wrap: wrap; gap: 12px; }
     .meta { margin: 18px 0 0; color: var(--fg-2); font-size: 14px; }
+    .brew { display: flex; align-items: center; gap: 10px; max-width: 100%; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+    .hero .brew { display: inline-flex; margin-top: 20px; }
+    .brew .prompt { color: var(--fg-2); font-family: var(--mono); font-size: 0.875em; user-select: none; }
+    .brew code { flex: 1; min-width: 0; padding: 0; border: 0; background: none; font-size: 0.84em; white-space: nowrap; overflow-x: auto; }
+    .brew .copy { flex: none; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--fg); font: 600 13px var(--sans); cursor: pointer; }
+    .brew .copy:hover { background: var(--bg-3); }
     .shot { position: relative; isolation: isolate; justify-self: center; }
     .shot::before { content: ""; position: absolute; inset: -15% -35%; z-index: -1; background: radial-gradient(closest-side, var(--glow), transparent); }
     .shot img { width: 380px; filter: drop-shadow(0 2px 4px var(--drop)) drop-shadow(0 28px 40px var(--drop)); }
@@ -250,6 +256,7 @@
             <a class="btn" href="https://github.com/svichas/ScriptDeck">View on GitHub</a>
           </div>
           <p class="meta"><span data-release>Latest release</span> · Apple silicon and Intel · Also for <a data-asset="-setup.exe" href="https://github.com/svichas/ScriptDeck/releases/latest">Windows</a></p>
+          <div class="brew"><span class="prompt" aria-hidden="true">$</span><code>brew install --cask svichas/tap/scriptdeck</code><button type="button" class="copy" data-copy="brew install --cask svichas/tap/scriptdeck" aria-live="polite">Copy</button></div>
         </div>
         <div class="shot">
           <picture>
@@ -395,8 +402,8 @@
               <li>Open ScriptDeck. It's ad-hoc signed, not notarized, so macOS blocks the first launch.</li>
               <li>In System Settings › Privacy &amp; Security, click <b>Open Anyway</b>. ScriptDeck appears in the menu bar.</li>
             </ol>
-            <p class="sub">Or install it with <a href="https://brew.sh">Homebrew</a>, then do step 3:</p>
-            <pre><code>brew install --cask svichas/tap/scriptdeck</code></pre>
+            <p class="sub">Or install it with <a href="https://brew.sh">Homebrew</a>, then do step 3 on the first launch:</p>
+            <div class="brew"><span class="prompt" aria-hidden="true">$</span><code>brew install --cask svichas/tap/scriptdeck</code><button type="button" class="copy" data-copy="brew install --cask svichas/tap/scriptdeck" aria-live="polite">Copy</button></div>
           </div>
           <div class="platform">
             <h3>Windows</h3>
@@ -597,6 +604,10 @@ pnpm install</code></pre>
                 <p>The app is ad-hoc signed, not notarized by Apple, so macOS blocks the first launch. Open it once, then click <b>Open Anyway</b> in System Settings › Privacy &amp; Security.</p>
               </details>
               <details>
+                <summary>I installed it with Homebrew: how do I update or remove it?</summary>
+                <p>ScriptDeck updates itself, so <code>brew upgrade</code> leaves it alone. To remove it, run <code>brew uninstall --cask scriptdeck</code>. Add <code>--zap</code> to delete its settings and caches too.</p>
+              </details>
+              <details>
                 <summary>Windows SmartScreen warns about the installer</summary>
                 <p>The installer isn't signed. Click <b>More info</b>, then <b>Run anyway</b>.</p>
               </details>
@@ -681,6 +692,16 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings</
         }
       })
       .catch(() => {});
+
+    for (const button of document.querySelectorAll('[data-copy]')) {
+      button.addEventListener('click', () => {
+        navigator.clipboard.writeText(button.dataset.copy).then(
+          () => { button.textContent = 'Copied'; },
+          () => { button.textContent = 'Select and copy'; },
+        );
+        setTimeout(() => { button.textContent = 'Copy'; }, 2000);
+      });
+    }
   </script>
 </body>
 </html>
