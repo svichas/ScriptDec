@@ -1,0 +1,27 @@
+name: Homebrew
+
+# Publishing a release points the cask in svichas/homebrew-tap at it.
+on:
+  release:
+    types: [published]
+
+jobs:
+  bump:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update the cask
+        env:
+          # Fine-grained token with Contents read and write on svichas/homebrew-tap.
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "ScriptDeck_${version}_universal.dmg"
+          sha=$(sha256sum "ScriptDeck_${version}_universal.dmg" | cut -d' ' -f1)
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/svichas/homebrew-tap.git" tap
+          cd tap
+          sed -i -E "s/^  version \".*\"/  version \"${version}\"/; s/^  sha256 \".*\"/  sha256 \"${sha}\"/" Casks/scriptdeck.rb
+          git diff --quiet && exit 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qam "scriptdeck ${version}"
+          git push

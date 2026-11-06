@@ -55,7 +55,11 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 
 ## Install
 
-Download the `.dmg` from the [latest release](https://github.com/svichas/ScriptDeck/releases/latest), open it and drag ScriptDeck to Applications.
+Download the `.dmg` from the [latest release](https://github.com/svichas/ScriptDeck/releases/latest), open it and drag ScriptDeck to Applications. Or install it with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask svichas/tap/scriptdeck
+```
 
 The app is ad-hoc signed, not notarized, so macOS blocks the first launch. Open it once, then click Open Anyway in System Settings > Privacy & Security.
 
