@@ -5,9 +5,11 @@ mod git;
 #[cfg(unix)]
 mod mcp;
 mod node;
+mod notify;
 mod permission;
 mod project;
 mod sessions;
+mod tray;
 mod update;
 
 use config::{Config, Project, Settings};
@@ -17,21 +19,15 @@ use sessions::{SessionView, Sessions, Spec, Status};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
-    image::Image,
     ipc::{Channel, InvokeResponseBody},
-    menu::{Menu, MenuItem, PredefinedMenuItem},
-    plugin::PermissionState,
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, State, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, State,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 const HOMEPAGE: &str = "https://github.com/svichas/ScriptDeck";
@@ -48,6 +44,14 @@ impl App {
         let mut config = self.config.lock().unwrap();
         change(&mut config)?;
         config::save(&self.config_path, &config)
+    }
+
+    /// `edit`, for one project.
+    fn edit_project(&self, id: &str, change: impl FnOnce(&mut Project)) -> Result<(), String> {
+        self.edit(|config| {
+            change(config.projects.iter_mut().find(|p| p.id == id).ok_or("Unknown project")?);
+            Ok(())
+        })
     }
 
     fn project(&self, id: &str) -> Result<Project, String> {
@@ -128,11 +132,8 @@ fn remove_project(state: State<App>, id: String) -> Result<(), String> {
 /// `base` is the copy the window loaded, so only its own changes are saved; see `project::merge`.
 #[tauri::command]
 fn update_project(state: State<App>, base: Project, project: Project) -> Result<(), String> {
-    state.edit(|config| {
-        let slot = config.projects.iter_mut().find(|p| p.id == project.id).ok_or("Unknown project")?;
-        project::merge(slot, &base, project);
-        Ok(())
-    })
+    let id = project.id.clone();
+    state.edit_project(&id, |stored| project::merge(stored, &base, project))
 }
 
 /// Adds, changes or deletes one script in a package.json; see `project::write_script`.
@@ -151,12 +152,10 @@ async fn edit_script(
     let Some(old) = old else { return Ok(()) };
     let old_key = project::script_key(package.as_deref(), &old);
     let new_key = new.map(|(name, _)| project::script_key(package.as_deref(), name));
-    state.edit(|config| {
-        let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
+    state.edit_project(&project_id, |project| {
         project::move_in_groups(project, &old_key, new_key.clone());
         project::move_pin(&mut project.pinned, &old_key, new_key.clone());
         project::move_pin(&mut project.keep_alive, &old_key, new_key);
-        Ok(())
     })
 }
 
@@ -216,7 +215,8 @@ fn mcp_command() -> Option<String> {
 
 /// `key` picks up the script's settings; the toolkit and Node installs have none. `cwd` is the folder to run in:
 /// the project's in the worktree the window showed it on, or where a reopened script ran. None is `Project::dir`.
-#[tauri::command]
+/// Off the main thread, which draws every window: it starts a login shell.
+#[tauri::command(async)]
 fn run(
     state: State<App>,
     project_id: String,
@@ -266,7 +266,8 @@ fn stop_all(state: State<App>) {
     state.sessions.stop_all();
 }
 
-#[tauri::command]
+/// Off the main thread, like `run`.
+#[tauri::command(async)]
 fn restart(state: State<App>, id: u32) -> Result<(), String> {
     state.sessions.restart(id)
 }
@@ -304,49 +305,6 @@ fn send_input(state: State<App>, id: u32, data: String) {
 #[tauri::command]
 fn resize(state: State<App>, id: u32, cols: u16, rows: u16) {
     state.sessions.resize(id, cols, rows);
-}
-
-fn show_window(app: &AppHandle, label: &str, url: String, title: &str, size: (f64, f64)) -> Result<(), String> {
-    let window = match app.get_webview_window(label) {
-        Some(window) => window,
-        None => {
-            let theme = app.state::<App>().config.lock().unwrap().settings.theme;
-            let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-                .title(title)
-                .theme(theme)
-                .inner_size(size.0, size.1)
-                .min_inner_size(520.0, 320.0);
-            // The page draws the title bar itself; the lights sit centred in the terminal's 40px tab bar.
-            #[cfg(target_os = "macos")]
-            let builder = builder
-                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(16.0, 13.0));
-            builder.build().map_err(|e| e.to_string())?
-        }
-    };
-    show_in_dock(app, true);
-    window.show().and_then(|_| window.set_focus()).map_err(|e| e.to_string())
-}
-
-/// Async: creating a window from a sync command deadlocks on Windows. `project` is the page it opens on, and
-/// `section` a part of that page to show, like "worktrees".
-#[tauri::command]
-async fn open_settings(app: AppHandle, project: Option<String>, section: Option<String>) -> Result<(), String> {
-    let query = |id: &String| match &section {
-        Some(section) => format!("settings.html?project={id}&section={section}"),
-        None => format!("settings.html?project={id}"),
-    };
-    show_window(&app, "settings", project.as_ref().map_or("settings.html".into(), query), "ScriptDeck", (860.0, 620.0))?;
-    // The URL only counts for a new window.
-    let Some(id) = project else { return Ok(()) };
-    app.emit_to("settings", "select-project", (id, section)).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn open_terminal(app: AppHandle, id: u32) -> Result<(), String> {
-    show_window(&app, "terminal", format!("terminal.html?session={id}"), "ScriptDeck Terminal", (900.0, 580.0))?;
-    app.emit_to("terminal", "select-session", id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -389,13 +347,6 @@ fn reveal(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn hide_popover(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("popover") {
-        let _ = window.hide();
-    }
-}
-
-#[tauri::command]
 fn quit(app: AppHandle) {
     app.exit(0);
 }
@@ -417,179 +368,6 @@ fn stop_scripts_for_exit(app: &AppHandle) {
     state.sessions.shutdown();
 }
 
-/// The menu-bar-only look, except while a real window is open so it can be reached with Cmd-Tab.
-fn show_in_dock(app: &AppHandle, visible: bool) {
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(if visible {
-        tauri::ActivationPolicy::Regular
-    } else {
-        tauri::ActivationPolicy::Accessory
-    });
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, visible);
-}
-
-fn place_at_tray(app: &AppHandle, window: &WebviewWindow) -> Option<()> {
-    let rect = app.tray_by_id("main")?.rect().ok()??;
-    let scale = window.scale_factor().ok()?;
-    let (tray, tray_size) = (rect.position.to_physical::<f64>(scale), rect.size.to_physical::<f64>(scale));
-    let size = window.outer_size().ok()?;
-    let (width, height) = (size.width as f64, size.height as f64);
-    let monitor = app.monitor_from_point(tray.x, tray.y).ok()??;
-    let (left, screen) = (monitor.position().x as f64, monitor.size());
-    let right = left + screen.width as f64 - width - 8.0;
-    let x = (tray.x + tray_size.width / 2.0 - width / 2.0).min(right).max(left + 8.0);
-    // macOS has the bar on top, Windows' taskbar is usually at the bottom.
-    let bottom_half = tray.y - monitor.position().y as f64 > screen.height as f64 / 2.0;
-    let y = if bottom_half { tray.y - height - 8.0 } else { tray.y + tray_size.height + 6.0 };
-    window.set_position(PhysicalPosition::new(x, y)).ok()
-}
-
-fn show_popover(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("popover") {
-        place_at_tray(app, &window);
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
-fn toggle_popover(app: &AppHandle) {
-    // Clicking the icon blurs the open popover first, so it would just reopen.
-    let hidden_at = *app.state::<App>().popover_hidden_at.lock().unwrap();
-    let visible = app.get_webview_window("popover").is_some_and(|w| w.is_visible().unwrap_or(false));
-    if visible {
-        if let Some(window) = app.get_webview_window("popover") {
-            let _ = window.hide();
-        }
-    } else if hidden_at.elapsed() > Duration::from_millis(250) {
-        show_popover(app);
-    }
-}
-
-fn sessions_changed(app: &AppHandle) {
-    let _ = app.emit("sessions-changed", ());
-    let list = app.state::<App>().sessions.list();
-    let running = list.iter().filter(|s| matches!(s.status, Status::Running | Status::Stopping)).count();
-    if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_title((running > 0).then(|| running.to_string()));
-        let _ = tray.set_tooltip(Some(format!("ScriptDeck: {running} running")));
-    }
-}
-
-/// "48s", "2m 3s", "1h 5m".
-fn took(millis: u64) -> String {
-    let secs = millis / 1000;
-    match secs {
-        ..60 => format!("{secs}s"),
-        60..3600 => format!("{}m {}s", secs / 60, secs % 60),
-        _ => format!("{}h {}m", secs / 3600, secs / 60 % 60),
-    }
-}
-
-/// How long a clean run took, when it's long enough that you've likely looked away.
-fn long_task(code: Option<i32>, millis: u64) -> Option<String> {
-    (code == Some(0) && millis >= 30_000).then(|| took(millis))
-}
-
-/// A test run, going by words in its name or command: test, test:unit, e2e, vitest run, jest, node --test.
-fn is_test(session: &SessionView) -> bool {
-    let text = format!("{} {}", session.label, session.command).to_lowercase();
-    text.split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|word| matches!(word, "test" | "tests" | "e2e" | "vitest" | "jest" | "mocha" | "cypress"))
-}
-
-/// The title and body for a run that ended on its own: a crash, a test run, or a long task finishing, each behind
-/// its own switch.
-fn notification(session: &SessionView, failed: bool, settings: &Settings) -> Option<(String, String)> {
-    let ran = session.ended_at.map_or(0, |end| end.saturating_sub(session.started_at));
-    let test = settings.notify_on_tests && is_test(session);
-    match (failed, long_task(session.code, ran)) {
-        (true, _) if settings.notify_on_failure || test => {
-            // A keep-alive script's first crash; if it gives up, the plain notice follows.
-            let restarting = if session.restart_in.is_some() { ", restarting" } else { "" };
-            Some((
-                format!("{} failed", session.label),
-                format!("{}: exit code {}{restarting}", session.project, session.code.unwrap_or_default()),
-            ))
-        }
-        (false, _) if test && session.code == Some(0) => {
-            Some((format!("{} passed in {}", session.label, took(ran)), session.project.clone()))
-        }
-        (false, Some(took)) if settings.notify_on_finish => {
-            Some((format!("{} finished in {took}", session.label), session.project.clone()))
-        }
-        _ => None,
-    }
-}
-
-/// Async: macOS answers on another thread. "prompt" until it's been asked, then "granted" or "denied".
-#[tauri::command]
-async fn notification_permission() -> PermissionState {
-    permission::state()
-}
-
-/// macOS asks only once, so after a "Don't Allow" this opens System Settings, the one place left to allow them.
-#[tauri::command]
-async fn allow_notifications(app: AppHandle) -> Result<PermissionState, String> {
-    if permission::state() != PermissionState::Denied {
-        return permission::ask();
-    }
-    let pane = "x-apple.systempreferences:com.apple.Notifications-Settings.extension";
-    let url = format!("{pane}?id={}", app.config().identifier);
-    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())?;
-    Ok(PermissionState::Denied)
-}
-
-/// A crash, a test run, or a long task finishing. Stopped runs never get here.
-fn script_ended(app: &AppHandle, session: &SessionView, failed: bool) {
-    // The output is already in front of them, and `pnpm outdated` exiting 1 isn't news.
-    let watching = app.get_webview_window("terminal").is_some_and(|window| window.is_focused().unwrap_or(false));
-    if watching {
-        return;
-    }
-    let settings = app.state::<App>().config.lock().unwrap().settings.clone();
-    if let Some((title, body)) = notification(session, failed, &settings) {
-        let _ = app.notification().builder().title(title).body(body).show();
-    }
-}
-
-// Only macOS tints template icons; a black glyph would vanish on a dark Windows taskbar.
-#[cfg(target_os = "macos")]
-const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
-#[cfg(not(target_os = "macos"))]
-const TRAY_ICON: &[u8] = include_bytes!("../icons/32x32.png");
-
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open ScriptDeck", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let stop = MenuItem::with_id(app, "stop_all", "Stop All Scripts", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit ScriptDeck", true, None::<&str>)?;
-    let line = PredefinedMenuItem::separator(app)?;
-    TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(TRAY_ICON)?)
-        .icon_as_template(true)
-        .tooltip("ScriptDeck")
-        .menu(&Menu::with_items(app, &[&open, &settings, &stop, &line, &quit])?)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "open" => show_popover(app),
-            "settings" => {
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move { open_settings(app, None, None).await });
-            }
-            "stop_all" => app.state::<App>().sessions.stop_all(),
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                toggle_popover(tray.app_handle());
-            }
-        })
-        .build(app)?;
-    Ok(())
-}
-
 fn main() {
     let context = tauri::generate_context!();
     // An agent launched `ScriptDeck --mcp`: be a pipe to the running app, not a second app.
@@ -604,7 +382,7 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _, event| {
                     if event.state == ShortcutState::Pressed {
-                        toggle_popover(app);
+                        tray::toggle_popover(app);
                     }
                 })
                 .build(),
@@ -628,15 +406,15 @@ fn main() {
                 config: Mutex::new(config),
                 config_path,
                 sessions: Sessions::new(
-                    Box::new(move || sessions_changed(&changed)),
-                    Box::new(move |session, failed| script_ended(&ended, session, failed)),
+                    Box::new(move || tray::sessions_changed(&changed)),
+                    Box::new(move |session, failed| notify::script_ended(&ended, session, failed)),
                 ),
                 popover_hidden_at: Mutex::new(Instant::now()),
             });
-            show_in_dock(app.handle(), false);
+            tray::show_in_dock(app.handle(), false);
             // Asked once, now, so the menu bar's first look at git doesn't wait for the login shell.
             std::thread::spawn(git::login_path);
-            build_tray(app.handle())?;
+            tray::build_tray(app.handle())?;
             app.set_theme(settings.theme);
             if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
                 eprintln!("{error}");
@@ -664,27 +442,11 @@ fn main() {
             }
             if first_run {
                 let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move { open_settings(handle, None, None).await });
+                tauri::async_runtime::spawn(async move { tray::open_settings(handle, None, None).await });
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            let app = window.app_handle();
-            match (window.label(), event) {
-                ("popover", WindowEvent::Focused(false)) => {
-                    let _ = window.hide();
-                    *app.state::<App>().popover_hidden_at.lock().unwrap() = Instant::now();
-                }
-                ("terminal", WindowEvent::Destroyed) => {
-                    app.state::<App>().sessions.detach();
-                    show_in_dock(app, app.get_webview_window("settings").is_some());
-                }
-                ("settings", WindowEvent::Destroyed) => {
-                    show_in_dock(app, app.get_webview_window("terminal").is_some());
-                }
-                _ => {}
-            }
-        })
+        .on_window_event(tray::on_window_event)
         .invoke_handler(tauri::generate_handler![
             list_projects,
             node_versions,
@@ -704,8 +466,8 @@ fn main() {
             set_login_item,
             settings,
             update_settings,
-            notification_permission,
-            allow_notifications,
+            notify::notification_permission,
+            notify::allow_notifications,
             mcp_command,
             run,
             list_sessions,
@@ -719,8 +481,8 @@ fn main() {
             attach,
             send_input,
             resize,
-            open_settings,
-            open_terminal,
+            tray::open_settings,
+            tray::open_terminal,
             open_url,
             open_link,
             open_homepage,
@@ -729,7 +491,7 @@ fn main() {
             update::download_update,
             update::install_update,
             reveal,
-            hide_popover,
+            tray::hide_popover,
             quit,
         ])
         .build(context)
@@ -747,90 +509,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn announces_clean_runs_of_30_seconds_or_more() {
-        assert_eq!(long_task(Some(0), 31_000).as_deref(), Some("31s"));
-        assert_eq!(long_task(Some(0), 123_400).as_deref(), Some("2m 3s"));
-        assert_eq!(long_task(Some(0), 3_725_000).as_deref(), Some("1h 2m"));
-        assert_eq!(long_task(Some(0), 29_999), None);
-        assert_eq!(long_task(Some(0), 5_000), None);
-        assert_eq!(long_task(Some(1), 60_000), None);
-        assert_eq!(long_task(None, 60_000), None);
-    }
-
-    /// `web`'s build, ended on its own with `code` after `secs`.
-    fn ended(code: i32, secs: u64) -> SessionView {
-        SessionView {
-            id: 1,
-            project_id: "p".into(),
-            project: "web".into(),
-            label: "build".into(),
-            command: "pnpm build".into(),
-            status: Status::Exited,
-            code: Some(code),
-            started_at: 1_000,
-            ended_at: Some(1_000 + secs * 1000),
-            url: None,
-            busy_port: None,
-            restart_in: None,
-            cwd: "/src/web".into(),
-            worktree: None,
-        }
-    }
-
-    #[test]
-    fn each_switch_silences_only_its_own_notification() {
-        let (long, short, crash) = (ended(0, 123), ended(0, 5), ended(1, 3));
-        let all = Settings::default();
-        let no_finish = Settings { notify_on_finish: false, ..Settings::default() };
-        let no_crash = Settings { notify_on_failure: false, ..Settings::default() };
-        let post = |s: &SessionView, settings| notification(s, s.code != Some(0), settings);
-        let title = |s: &SessionView, settings| post(s, settings).map(|(title, _)| title);
-
-        assert_eq!(post(&long, &all), Some(("build finished in 2m 3s".into(), "web".into())));
-        assert_eq!(post(&crash, &all), Some(("build failed".into(), "web: exit code 1".into())));
-        assert_eq!(post(&short, &all), None);
-        assert_eq!(title(&long, &no_finish), None);
-        assert_eq!(title(&crash, &no_finish).as_deref(), Some("build failed"));
-        assert_eq!(title(&long, &no_crash).as_deref(), Some("build finished in 2m 3s"));
-        assert_eq!(title(&crash, &no_crash), None);
-
-        let restarting = SessionView { restart_in: Some(1), ..crash.clone() };
-        let body = post(&restarting, &all).map(|(_, body)| body);
-        assert_eq!(body.as_deref(), Some("web: exit code 1, restarting"));
-    }
-
-    #[test]
-    fn test_runs_say_how_they_went_however_long_they_took() {
-        let test = |code, secs| SessionView { label: "test:unit".into(), command: "pnpm run test:unit".into(), ..ended(code, secs) };
-        let all = Settings::default();
-        let only_tests = Settings { notify_on_failure: false, notify_on_finish: false, ..Settings::default() };
-        let no_tests = Settings { notify_on_tests: false, ..Settings::default() };
-        let post = |s: &SessionView, settings| notification(s, s.code != Some(0), settings);
-        let title = |s: &SessionView, settings| post(s, settings).map(|(title, _)| title);
-
-        assert_eq!(post(&test(0, 5), &all), Some(("test:unit passed in 5s".into(), "web".into())));
-        assert_eq!(title(&test(0, 123), &all).as_deref(), Some("test:unit passed in 2m 3s"));
-        assert_eq!(post(&test(1, 5), &only_tests), Some(("test:unit failed".into(), "web: exit code 1".into())));
-        assert_eq!(title(&test(0, 5), &only_tests).as_deref(), Some("test:unit passed in 5s"));
-        assert_eq!(title(&test(0, 5), &no_tests), None);
-        assert_eq!(title(&test(0, 123), &no_tests).as_deref(), Some("test:unit finished in 2m 3s"));
-        assert_eq!(title(&ended(0, 5), &all), None); // a quick build is still quiet
-    }
-
-    #[test]
-    fn spots_test_runs_by_their_name_or_command() {
-        let run = |label: &str, command: &str| is_test(&SessionView { label: label.into(), command: command.into(), ..ended(0, 1) });
-        assert!(run("test", "pnpm run test"));
-        assert!(run("ui test:e2e", "pnpm --filter @acme/ui run test:e2e"));
-        assert!(run("unit", "npx vitest run"));
-        assert!(run("e2e", "pnpm run e2e"));
-        assert!(run("Specs", "node --test"));
-        assert!(!run("build", "pnpm run build"));
-        assert!(!run("latest", "npm i -g pnpm@latest"));
-        assert!(!run("pretest", "pnpm run pretest"));
-    }
 
     #[test]
     fn opens_only_web_links() {

@@ -1,4 +1,4 @@
-import { call, h, iconButton, invoke, isLive, listen } from './shared.js';
+import { call, h, iconButton, invoke, isLive, listen, store, stored } from './shared.js';
 
 /** The update banner. The popover and Settings put it at the bottom of their window. */
 export const updateBanner = h('div', { class: 'update', hidden: true });
@@ -10,9 +10,6 @@ let status = { state: 'idle' };
 let current = '';
 let running = 0; // scripts that restarting would stop
 let drawn = ''; // what the banner shows, so progress ticks only move the bar
-
-const stored = (key) => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
-const store = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* only a convenience */ } };
 
 const action = (label, command) => h('button', { class: 'btn primary', onClick: () => call(command) }, label);
 

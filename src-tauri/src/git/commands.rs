@@ -94,11 +94,7 @@ pub async fn git_add_worktree(
     let state = app.state::<App>();
     let (_, git) = project_git(&state, &project_id)?;
     let dir = git.add_worktree(&branch, base.as_deref())?;
-    state.edit(|config| {
-        let project = config.projects.iter_mut().find(|p| p.id == project_id).ok_or("Unknown project")?;
-        project.worktree = Some(dir.to_string_lossy().into_owned());
-        Ok(())
-    })
+    state.edit_project(&project_id, |project| project.worktree = Some(dir.to_string_lossy().into_owned()))
 }
 
 /// Deletes a worktree's folder, not while scripts run in it. Projects added from inside it go too, and projects

@@ -181,6 +181,20 @@ export const call = (command, args) => invoke(command, args).catch((error) => { 
 
 export const isLive = (session) => session.status === 'running' || session.status === 'stopping';
 
+/** What this window saved under `key`, or null. Storage can be off or full, so it's only ever a convenience. */
+export const stored = (key) => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
+export const store = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* only a convenience */ } };
+
+/** A test for text with every word of `query` in it, ignoring case: how every search box here matches. */
+export function matcher(query) {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return (text) => terms.every((term) => text.toLowerCase().includes(term));
+}
+
+/** Rows the size of real ones, with bars this many percent wide, so a list fills in instead of growing. */
+export const skeletonRows = (widths) => widths.map((width) => h('div', { class: 'row skeleton', 'aria-hidden': 'true' },
+  h('span', { class: 'bar', style: `width: ${width}%` })));
+
 /** 48s, 2m 3s, 1h 5m: the same as the long-task notification. */
 function duration(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -210,9 +224,12 @@ export function usageLabel({ memory, cpu }) {
   return `${size} · ${Math.round(cpu)}%`;
 }
 
+/** A custom script's key, as pins, groups and restart on crash hold it. */
+export const customKey = (custom) => `custom:${custom.id}`;
+
 export function scriptsOf(project) {
   const custom = project.custom.map((c) => ({
-    key: `custom:${c.id}`, name: c.name, command: c.command, body: c.command, custom: true,
+    key: customKey(c), name: c.name, command: c.command, body: c.command, custom: true,
   }));
   return [...custom, ...project.scan.scripts];
 }

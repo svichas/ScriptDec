@@ -1,7 +1,7 @@
 import { combo } from './combo.js';
 import {
-  call, groupScripts, h, icon, iconButton, invoke, listen, listProjects, MAC, missingLabel, runScript, saveProject,
-  scriptLabel, scriptsOf, shortPackage, toast, togglePin,
+  call, customKey, groupScripts, h, icon, iconButton, invoke, listen, listProjects, MAC, matcher, missingLabel, runScript,
+  saveProject, scriptLabel, scriptsOf, shortPackage, toast, togglePin,
 } from './shared.js';
 import {
   gitChip, gitDropdown, initGit, loadRepo, renderClone, resetGit, revealWorktrees, worktreesSection,
@@ -279,8 +279,6 @@ function toolkitSection(project) {
       : h('button', { class: 'btn', onClick: () => run(tool) }, 'Run'))));
 }
 
-const customKey = (script) => `custom:${script.id}`; // the key scriptsOf gives it
-
 const sectionHead = (title, ...actions) => h('div', { class: 'section-head' }, h('h2', {}, title), actions);
 
 /** An x that asks first: its second click, on "Delete?", deletes. */
@@ -475,11 +473,8 @@ const packageTitle = (pkg) => h('div', { class: 'package-title', title: pkg },
   iconButton('plus', `Add a script to ${pkg}`, () => addScript(pkg), 'reveal'));
 
 function scriptList(project) {
-  const terms = filter.toLowerCase().split(/\s+/).filter(Boolean);
-  const found = project.scan.scripts.filter((s) => {
-    const text = `${s.package ?? ''} ${s.name} ${s.body}`.toLowerCase();
-    return terms.every((term) => text.includes(term));
-  });
+  const matches = matcher(filter);
+  const found = project.scan.scripts.filter((s) => matches(`${s.package ?? ''} ${s.name} ${s.body}`));
   const adding = editing?.key === 'new';
   let last;
   // shortcut: a workspace package with no scripts gets no heading to add one from, list packages in the scan if that matters.
@@ -496,7 +491,7 @@ function scriptList(project) {
   if (found.length > MAX_ROWS) {
     rows.push(h('p', { class: 'note' }, `Showing ${MAX_ROWS} of ${found.length}. Filter to narrow it down.`));
   }
-  return rows.length ? rows : [h('p', { class: 'note' }, terms.length ? 'No matching scripts.' : 'No scripts yet.')];
+  return rows.length ? rows : [h('p', { class: 'note' }, filter.trim() ? 'No matching scripts.' : 'No scripts yet.')];
 }
 
 function scriptsSection(project) {

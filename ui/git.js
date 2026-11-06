@@ -1,4 +1,4 @@
-import { call, easeHeight, h, icon, invoke, saveProject, toast } from './shared.js';
+import { call, easeHeight, h, icon, invoke, matcher, saveProject, skeletonRows, toast } from './shared.js';
 
 const MAX_BRANCHES = 50;
 
@@ -129,8 +129,7 @@ export function switcher(project, { onChange, onClose }) {
   /** [heading, rows] for each kind that has something to show. */
   function sections() {
     const query = input.value.trim();
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const matches = (text) => terms.every((term) => text.toLowerCase().includes(term));
+    const matches = matcher(query);
     // The name typed comes first, so Enter on "main" can't pick a more recent "maintenance".
     const exactFirst = (exact) => (a, b) => exact(b) - exact(a);
     const isBranch = (b) => b.name === query || (b.remote && localName(b.name) === query);
@@ -198,13 +197,9 @@ export function switcher(project, { onChange, onClose }) {
     section.running > 0 && h('span', { class: 'tag on' }, `${section.running} running`));
   }
 
-  /** Rows the size of real ones, until the first read: the list fills in instead of growing from one line. */
-  const placeholders = () => [52, 70, 44, 62].map((width) => h('div', { class: 'row skeleton', 'aria-hidden': 'true' },
-    h('span', { class: 'bar', style: `width: ${width}%` })));
-
   function content() {
     if (error || repo === null) return [h('div', { class: 'hint warn' }, error ?? 'Not a git repository.')];
-    if (repo === undefined) return placeholders();
+    if (repo === undefined) return skeletonRows([52, 70, 44, 62]); // until the first read
     const found = sections();
     rows = found.filter((section) => section.open).flatMap((section) => section.items);
     cursor = Math.min(cursor, Math.max(rows.length - 1, 0));
