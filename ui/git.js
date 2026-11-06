@@ -1,6 +1,42 @@
-import { call, h, icon, invoke, saveProject, toast } from './shared.js';
+import { call, easeHeight, h, icon, invoke, saveProject, toast } from './shared.js';
 
 const MAX_BRANCHES = 50;
+
+// What git said last about each project's repository, by project id, so the switcher and Settings can draw it at
+// once and then what git says now, instead of a blank that jumps when it fills. Each project's read on its way
+// too, so a read started on hover is the one the click then uses.
+const known = new Map();
+const reading = new Map(); // project id → { read, ticket }
+let tickets = 0;
+
+/** A project's repository as last read: undefined before the first read, null outside a repository. */
+export const knownRepo = (projectId) => known.get(projectId);
+
+/**
+ * Reads a project's repository and remembers it. A read already on its way is shared, unless `fresh` asks for one
+ * that starts now, as after a change. Only the newest read is remembered, however they finish.
+ */
+export function readRepo(projectId, { fresh = false } = {}) {
+  const going = reading.get(projectId);
+  if (going && !fresh) return going.read;
+  const ticket = ++tickets;
+  const newest = () => reading.get(projectId)?.ticket === ticket;
+  const read = invoke('git_repo', { projectId }).then(
+    (repo) => {
+      if (newest()) {
+        known.set(projectId, repo);
+        reading.delete(projectId);
+      }
+      return repo;
+    },
+    (error) => {
+      if (newest()) reading.delete(projectId);
+      throw error;
+    },
+  );
+  reading.set(projectId, { read, ticket });
+  return read;
+}
 
 /** "main", or "detached at 1a2b3c4". `git` is a summary from `git_overview`, or a repository's status. */
 export const branchName = (git) => git.branch ?? (git.commit ? `detached at ${git.commit}` : 'no commits yet');
@@ -23,8 +59,8 @@ export async function pull(projectId) {
 }
 
 /**
- * The branch a project is on, a dot for uncommitted changes and what's left to pull. A folder in place of the branch
- * icon, and a tint, say it's switched to a worktree other than its own folder. `git` is its summary or status.
+ * The branch a project is on, a dot for uncommitted changes and what's left to pull. The worktree icon in place of
+ * the branch, and a tint, say it's switched to a worktree other than its own folder. `git` is its summary or status.
  */
 export function branchChip(project, git, { open, onClick }) {
   const away = project.dir !== project.path;
@@ -36,9 +72,11 @@ export function branchChip(project, git, { open, onClick }) {
     'data-tip': `${about}. Click to switch worktree or branch.`,
     'aria-label': `${about}. Switch worktree or branch`,
     'aria-expanded': String(open),
+    // Pointing at it starts the read, so the switcher usually opens with its lists already there.
+    onMouseenter: () => readRepo(project.id).catch(() => {}),
     onClick,
   },
-  icon(away ? 'folder' : 'branch'),
+  icon(away ? 'worktree' : 'branch'),
   h('span', { class: 'name' }, branchName(git)),
   git.changes > 0 && h('span', { class: 'dirty', 'aria-hidden': 'true' }),
   git.behind > 0 && h('span', { class: 'sync' }, `↓${git.behind}`));
@@ -65,7 +103,8 @@ let treesOpen = false;
  * `onChange` runs after any of them, for the window to reload.
  */
 export function switcher(project, { onChange, onClose }) {
-  let repo; // undefined while loading, null outside a repository
+  // As last read, drawn at once; then as read now. Undefined until the first read, null outside a repository.
+  let repo = knownRepo(project.id);
   let error = null;
   let busy = null; // what's being done, shown instead of the list
   let cursor = 0;
@@ -82,9 +121,11 @@ export function switcher(project, { onChange, onClose }) {
   const list = h('div', { class: 'picker-list', role: 'listbox', 'aria-label': 'Worktrees and branches' });
   const el = h('div', { class: 'picker' }, input, list);
 
-  invoke('git_repo', { projectId: project.id })
-    .then((found) => { repo = found; }, (e) => { error = String(e); })
-    .then(draw);
+  readRepo(project.id).then(
+    (found) => { repo = found; },
+    // What was last read still holds; only with nothing to show is the error the list.
+    (e) => { if (repo === undefined) error = String(e); },
+  ).then(() => draw({ ease: true }));
 
   /** [heading, rows] for each kind that has something to show. */
   function sections() {
@@ -134,7 +175,7 @@ export function switcher(project, { onChange, onClose }) {
     if (row.tree) {
       const { tree } = row;
       return h('div', props,
-        icon('folder'),
+        icon('worktree'),
         line(tree.branch ?? 'detached HEAD', shortPath(tree, row.main)),
         tree.running > 0 && h('span', { class: 'tag on' }, `${tree.running} running`),
         tree.current && h('span', { class: 'tag' }, 'current'));
@@ -152,23 +193,49 @@ export function switcher(project, { onChange, onClose }) {
     return h('button', {
       class: `picker-heading toggle ${section.open ? 'open' : ''}`,
       'aria-expanded': String(section.open),
-      onClick: () => { treesOpen = !treesOpen; draw(); input.focus(); },
+      onClick: () => { treesOpen = !treesOpen; draw({ ease: true }); input.focus(); },
     },
-    icon('chevron'), section.heading,
+    icon('chevron'), icon('worktree'), section.heading,
     section.running > 0 && h('span', { class: 'tag on' }, `${section.running} running`));
   }
 
-  function draw() {
-    if (error || repo === null) return list.replaceChildren(h('div', { class: 'hint warn' }, error ?? 'Not a git repository.'));
-    if (repo === undefined) return list.replaceChildren(h('div', { class: 'hint' }, 'Loading…'));
-    if (busy) return list.replaceChildren(h('div', { class: 'hint' }, busy));
+  /** Rows the size of real ones, until the first read: the list fills in instead of growing from one line. */
+  const placeholders = () => [52, 70, 44, 62].map((width) => h('div', { class: 'row skeleton', 'aria-hidden': 'true' },
+    h('span', { class: 'bar', style: `width: ${width}%` })));
+
+  function content() {
+    if (error || repo === null) return [h('div', { class: 'hint warn' }, error ?? 'Not a git repository.')];
+    if (repo === undefined) return placeholders();
     const found = sections();
     rows = found.filter((section) => section.open).flatMap((section) => section.items);
     cursor = Math.min(cursor, Math.max(rows.length - 1, 0));
     let index = 0;
-    list.replaceChildren(...(found.length
+    return found.length
       ? found.flatMap((section) => [heading(section), ...(section.open ? section.items.map((row) => option(row, index++)) : [])])
-      : [h('div', { class: 'hint' }, 'Nothing matches.')]));
+      : [h('div', { class: 'hint' }, 'Nothing matches.')];
+  }
+
+  /** `ease` slides the list to its new height: as a read lands, or the worktrees fold. Typing doesn't, as it's quicker. */
+  function draw({ ease = false } = {}) {
+    if (busy) return; // the list stays as it was, dimmed, while git works
+    const from = list.offsetHeight;
+    list.replaceChildren(...content());
+    if (ease && list.isConnected) easeHeight(list, from);
+  }
+
+  /** Names what git is doing in the field, and dims the list, so nothing moves while it works. */
+  function working(label) {
+    const typed = input.value;
+    busy = label;
+    el.classList.add('busy');
+    Object.assign(input, { value: '', placeholder: label, disabled: true });
+    return () => {
+      busy = null;
+      el.classList.remove('busy');
+      Object.assign(input, { value: typed, placeholder: 'Find or create a worktree or branch…', disabled: false });
+      draw();
+      input.focus();
+    };
   }
 
   async function pick(row) {
@@ -193,15 +260,14 @@ export function switcher(project, { onChange, onClose }) {
       work = [`Creating ${branch}…`, () => call('git_switch', { projectId, branch }), `Created ${branch} and checked it out`];
     }
     const [label, run, done] = work;
-    busy = label;
-    draw();
+    const finished = working(label);
     try {
       await run();
+      readRepo(projectId, { fresh: true }).catch(() => {}); // what changed, for the next time it opens
       toast(done, 'success');
       onChange();
     } catch { /* call() showed it */ } finally {
-      busy = null;
-      draw();
+      finished();
     }
   }
 
@@ -219,5 +285,6 @@ export function switcher(project, { onChange, onClose }) {
     }
   }
 
+  draw(); // what's known now, or placeholders; the read in flight eases it to what git says
   return { el, focus: () => input.focus() };
 }

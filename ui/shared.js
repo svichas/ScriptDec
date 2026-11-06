@@ -38,6 +38,14 @@ const PATHS = {
   check: '<path d="m3.5 8.4 3 3 6-6.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
   alert: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.9v3.6M8 11.1v.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
   info: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 7.4v3.7M8 4.9v.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  // Two folders, one behind the other: more than one checkout of the same repository.
+  worktree: '<g fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6V3.5a1 1 0 0 1 1-1h2.4l1.3 1.3h4.3a1 1 0 0 1 1 1v3.7a1 1 0 0 1-1 1h-2"/><path d="M1.5 7a1 1 0 0 1 1-1h2.4l1.3 1.3h4.3a1 1 0 0 1 1 1v4.2a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1z"/></g>',
+  // Down onto a line, where download's tray means a new copy.
+  pull: '<path d="M8 2.5v7.6M4.7 6.9 8 10.2l3.3-3.3M3 13.2h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+  swap: '<path d="M2.5 5.5h10M10 3l2.5 2.5L10 8M13.5 10.5h-10M6 8l-2.5 2.5L6 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+  trash: '<path d="M2.5 4.5h11M6.3 4.5V3.1a.8.8 0 0 1 .8-.8h1.8a.8.8 0 0 1 .8.8v1.4M4 4.5l.7 8.4a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.4M6.8 7v4.4M9.2 7v4.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+  // A box, for a package install.
+  install: '<path d="M8 1.9 13.5 4.9v6.2L8 14.1l-5.5-3V4.9zM2.7 5 8 7.9 13.3 5M8 7.9v6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 };
 
 export function icon(name) {
@@ -53,6 +61,49 @@ export function iconButton(name, title, onClick, extra = '') {
     'aria-label': title,
     onClick: (event) => { event.stopPropagation(); onClick(event); },
   }, icon(name));
+}
+
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+
+/** Runs `then` once, whether the transition ends or not: a rebuilt list can drop the element mid-way. */
+function afterTransition(el, then) {
+  let done = false;
+  const finish = (event) => {
+    // A row's own colour transition bubbles up here too.
+    if (done || (event && (event.target !== el || event.propertyName !== 'height'))) return;
+    done = true;
+    el.removeEventListener('transitionend', finish);
+    el.style.height = el.style.overflow = el.style.transition = '';
+    then?.();
+  };
+  el.addEventListener('transitionend', finish);
+  setTimeout(finish, 320);
+}
+
+/**
+ * Eases `el` from the height it had, `from`, to the one its content gives it now, so what's below slides instead
+ * of jumping. Call it right after changing the content.
+ */
+export function easeHeight(el, from) {
+  const to = el.offsetHeight;
+  if (calm.matches || Math.abs(to - from) < 2) return;
+  el.style.overflow = 'hidden';
+  el.style.height = `${from}px`;
+  void el.offsetHeight; // lays the start out, or the browser would skip straight to the end
+  el.style.transition = 'height 0.18s ease';
+  el.style.height = `${to}px`;
+  afterTransition(el);
+}
+
+/** Eases `el` shut, then runs `then`, which hides it for good. */
+export function easeShut(el, then) {
+  if (calm.matches) return then();
+  el.style.overflow = 'hidden';
+  el.style.height = `${el.offsetHeight}px`;
+  void el.offsetHeight;
+  el.style.transition = 'height 0.16s ease';
+  el.style.height = '0px';
+  afterTransition(el, then);
 }
 
 // Notes stack at the bottom of the window and go by themselves; hovering one holds it.
@@ -197,9 +248,9 @@ export function withArgs(project, script, args) {
 }
 
 // This window's copy of each project as last loaded or saved, by id: a save sends its changes since then.
-// `scan` and `dir` come from list_projects and are never saved.
+// `scan`, `dir` and `isRepo` come from list_projects and are never saved.
 const loaded = new Map();
-const remember = ({ scan, dir, ...project }) => loaded.set(project.id, structuredClone(project));
+const remember = ({ scan, dir, isRepo, ...project }) => loaded.set(project.id, structuredClone(project));
 
 export async function listProjects() {
   const projects = await invoke('list_projects');
@@ -208,7 +259,7 @@ export async function listProjects() {
 }
 
 /** Another window may have changed the project since this one loaded it, so Rust applies only this window's changes. */
-export function saveProject({ scan, dir, ...project }) {
+export function saveProject({ scan, dir, isRepo, ...project }) {
   const base = loaded.get(project.id);
   remember(project); // now, so a second save before this one returns sends only its own change
   return call('update_project', { base, project });

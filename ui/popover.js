@@ -1,5 +1,6 @@
 import {
-  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, listProjects, missingLabel,
+  call, dotClass, easeHeight, easeShut, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen,
+  listProjects, missingLabel,
   nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, sessionFor as findSession, statusText,
   toast, togglePin, urlLabel, usageLabel, withArgs,
 } from './shared.js';
@@ -214,19 +215,34 @@ function chip(project) {
 }
 
 function togglePicker(project) {
-  if (picker?.id === project.id) return closePicker();
+  // One still sliding shut counts as closed, so a quick second click opens it again.
+  if (picker?.id === project.id && !picker.closing) return closePicker({ ease: true });
   picker = {
     id: project.id,
-    ...switcher(project, { onChange: () => { closePicker(); refresh(); }, onClose: closePicker }),
+    ...switcher(project, {
+      onChange: () => { closePicker(); refresh(); },
+      onClose: () => closePicker({ ease: true }),
+    }),
   };
   render();
+  // Slides open, rather than shoving the scripts under it down in one go.
+  if (picker.box) easeHeight(picker.box, 0);
   picker.focus();
 }
 
-function closePicker() {
-  picker = null;
-  render();
-  search.focus();
+/** `ease` slides it shut first: when it's closed by hand, not when the window hides or a pick reloads it. */
+function closePicker({ ease = false } = {}) {
+  if (!picker) return;
+  const closing = picker;
+  closing.closing = true;
+  const gone = () => {
+    if (picker !== closing) return; // another one opened meanwhile
+    picker = null;
+    render();
+    search.focus();
+  };
+  if (ease && closing.box?.isConnected) easeShut(closing.box, gone);
+  else gone();
 }
 
 async function runPull(project) {
@@ -241,12 +257,13 @@ async function runPull(project) {
 function pickerFoot(project) {
   const label = pullLabel(git[project.id]);
   return h('div', { class: 'picker-foot' },
-    label && h('button', { class: 'btn', disabled: pulling != null, onClick: () => runPull(project) },
-      pulling === project.id ? 'Pulling…' : label),
+    label && h('button', {
+      class: 'btn', disabled: pulling != null, 'data-tip': 'Fast-forward only', onClick: () => runPull(project),
+    }, icon('pull'), pulling === project.id ? 'Pulling…' : label),
     h('span', { class: 'grow' }),
     h('button', {
       class: 'link', onClick: () => call('open_settings', { project: project.id, section: 'worktrees' }),
-    }, 'Manage worktrees…'));
+    }, icon('worktree'), 'Manage worktrees…'));
 }
 
 /** A new worktree or a fresh clone has no node_modules yet, and its scripts would fail until it's installed. */
@@ -256,7 +273,7 @@ function installNotice(project) {
     .then(() => toast(`Started ${install.command}. It's in Scripts above.`, 'info'), () => {});
   return install && h('div', { class: 'hint inline install' },
     h('span', { class: 'warn' }, away(project) ? 'Not installed in this worktree yet' : 'Not installed yet'),
-    h('button', { class: 'btn', 'data-tip': 'Runs in its own terminal', onClick: start }, install.command));
+    h('button', { class: 'btn', 'data-tip': 'Runs in its own terminal', onClick: start }, icon('install'), install.command));
 }
 
 function projectBlock(project) {
@@ -274,7 +291,8 @@ function projectBlock(project) {
         h('span', { class: 'name' }, project.name)),
       chip(project),
       h('span', { class: `info ${node.wanted && !node.resolved ? 'warn' : ''}` }, error ? '' : `${pm} · ${nodeLabel(node)}`)),
-    picker?.id === project.id && git[project.id] && h('div', { class: 'picker-box' }, picker.el, pickerFoot(project)),
+    picker?.id === project.id && !picker.closing && git[project.id]
+      && (picker.box = h('div', { class: 'picker-box' }, picker.el, pickerFoot(project))),
     open && error && h('div', { class: 'hint warn' }, error),
     open && !error && !project.scan.installed && installNotice(project),
     open && project.groups.map((group) => groupRow(project, group, false, false)),
@@ -382,4 +400,10 @@ window.addEventListener('blur', () => clearInterval(ticker));
 // Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
 window.addEventListener('blur', () => argsFor && closeArgs());
 window.addEventListener('blur', () => picker && closePicker());
+// A click anywhere else in the window puts the switcher away, as a menu goes; a chip's click toggles it itself.
+// On the click, and while it's caught on its way down: rows' buttons stop it reaching the document, and closing on
+// mousedown would slide the list under the pointer before the button came up, so the click would miss.
+document.addEventListener('click', (event) => {
+  if (picker && !picker.closing && !event.target.closest('.picker-box, .branch')) closePicker({ ease: true });
+}, true);
 refresh();

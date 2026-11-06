@@ -48,11 +48,14 @@ async function load() {
   await showRepo();
 }
 
-/** The git sections fill in after the page: git takes a moment. */
+/** The page draws git as last read; this reads it again and draws what changed. */
 async function showRepo() {
+  const id = selected()?.id;
   const editor = editing;
-  // Not while a script editor opened meanwhile: rebuilding it would take the cursor out. The next render shows it.
-  if (await loadRepo(selected()?.id) && editing === editor) render();
+  await loadRepo(id);
+  // Not for a page left meanwhile, nor while a script editor opened meanwhile: rebuilding it would take the cursor
+  // out. The next render shows it.
+  if (id === selected()?.id && editing === editor) render();
 }
 
 function select(id) {
@@ -517,11 +520,13 @@ function render() {
   if (focused?.isConnected && focused !== document.activeElement) focused.focus();
 }
 
-// From the menu bar: [project id, the part of its page to show, like "worktrees"].
-listen('select-project', ({ payload: [id, section] }) => load().then(() => {
-  select(id);
+// From the menu bar: [project id, the part of its page to show, like "worktrees"]. At once, from what this window
+// has; the reload after it brings anything newer. Waiting for it first would wait on git too.
+listen('select-project', ({ payload: [id, section] }) => {
   if (section === 'worktrees') revealWorktrees();
-}));
+  select(id);
+  load();
+});
 
 // Reloading rebuilds the page, which would knock the cursor out of an open script editor.
 window.addEventListener('focus', () => { if (!editing) load(); });

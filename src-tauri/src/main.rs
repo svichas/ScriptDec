@@ -55,12 +55,15 @@ impl App {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProjectView {
     #[serde(flatten)]
     project: Project,
     scan: Scan,
     /// Where its scripts run: `Project::dir`.
     dir: String,
+    /// In a git repository, from its files alone: the windows lay out its git before git is asked about it.
+    is_repo: bool,
 }
 
 #[tauri::command]
@@ -70,7 +73,8 @@ async fn list_projects(app: AppHandle) -> Vec<ProjectView> {
         .into_iter()
         .map(|project| {
             let scan = project::scan(&project);
-            ProjectView { dir: project.dir().to_string(), project, scan }
+            let dir = project.dir().to_string();
+            ProjectView { is_repo: git::is_repo(Path::new(&dir)), dir, project, scan }
         })
         .collect()
 }
