@@ -29,6 +29,8 @@ pub struct Script {
 pub struct Tool {
     pub label: String,
     pub command: String,
+    /// What it does, in a sentence, for Settings.
+    pub note: String,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -174,13 +176,13 @@ fn tools(pm: &str) -> Vec<Tool> {
     let clean = if cfg!(windows) { "rmdir /s /q node_modules &" } else { "rm -rf node_modules &&" };
     let update = if pm == "yarn" { "upgrade" } else { "update" };
     [
-        ("Install", format!("{pm} install")),
-        ("Outdated", format!("{pm} outdated")),
-        ("Update", format!("{pm} {update}")),
-        ("Audit", format!("{pm} audit")),
-        ("Clean reinstall", format!("{clean} {pm} install")),
+        ("Install", format!("{pm} install"), "Installs what package.json lists, at the versions in the lockfile."),
+        ("Outdated", format!("{pm} outdated"), "Lists the dependencies that have newer versions. Changes nothing."),
+        ("Update", format!("{pm} {update}"), "Updates dependencies to the newest versions package.json's ranges allow."),
+        ("Audit", format!("{pm} audit"), "Checks dependencies for known security issues. Changes nothing."),
+        ("Clean reinstall", format!("{clean} {pm} install"), "Deletes node_modules and installs from scratch."),
     ]
-    .map(|(label, command)| Tool { label: label.to_string(), command })
+    .map(|(label, command, note)| Tool { label: label.to_string(), command, note: note.to_string() })
     .to_vec()
 }
 

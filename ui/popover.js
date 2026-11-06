@@ -194,7 +194,8 @@ function startGroup(project, group) {
 function groupRow(project, group, showProject, selected) {
   const { scripts, missing, live, idle } = groupState(project, group);
   const names = [...scripts.map(scriptLabel), ...missing.map(missingLabel)].join(', ');
-  const sub = [showProject && project.name, `${live.length} of ${scripts.length} running`, names];
+  const running = live.length > 0 && `${live.length} of ${scripts.length} running`;
+  const sub = [showProject && project.name, running, names || 'No scripts yet'];
   return h('div', { class: `row ${selected ? 'selected' : ''}`, onClick: () => startGroup(project, group) },
     h('span', { class: `dot ${!live.length ? '' : idle.length ? 'some' : 'on'}` }),
     h('div', { class: 'meta' },

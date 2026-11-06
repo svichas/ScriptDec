@@ -1,3 +1,4 @@
+import { combo } from './combo.js';
 import {
   call, groupScripts, h, icon, iconButton, invoke, listen, listProjects, MAC, missingLabel, runScript, saveProject,
   scriptLabel, scriptsOf, shortPackage, toast, togglePin,
@@ -231,122 +232,155 @@ function nodeSection(project) {
       : versions.length
         ? 'No .nvmrc, .node-version or Volta pin, so scripts use your shell default.'
         : 'No nvm, fnm or Volta found, so scripts use whatever node your shell gives them.';
-  return h('section', {},
-    h('h2', {}, 'Node version'),
-    h('div', { class: 'inline' }, select,
-      node.install && h('button', {
-        class: 'btn primary',
-        title: node.install,
-        onClick: () => launch(project, { name: node.install, command: node.install }),
-      }, `Install ${node.wanted}`)),
-    h('p', { class: `note ${missing ? 'warn' : ''}` }, note),
-    node.engines && h('p', { class: 'note' }, `package.json engines: ${node.engines}`));
+  return group('Node',
+    setting('Version',
+      [h('div', { class: missing ? 'warn' : '' }, note), node.engines && h('div', {}, `package.json engines: ${node.engines}`)],
+      h('div', { class: 'inline' },
+        node.install && h('button', {
+          class: 'btn primary',
+          title: node.install,
+          onClick: () => launch(project, { name: node.install, command: node.install }),
+        }, `Install ${node.wanted}`),
+        select)));
 }
 
+/** Each tool says what it does and the command it runs, so nothing is a surprise. */
 function toolkitSection(project) {
   const run = (tool) => launch(project, { name: tool.label, command: tool.command });
-  return h('section', {},
-    h('h2', {}, `Toolkit (${project.scan.pm})`),
-    h('div', { class: 'inline' }, project.scan.tools.map((tool) => (tool.label === 'Clean reinstall'
-      ? confirmButton('clean', tool.label, 'Delete node_modules?', () => run(tool))
-      : h('button', { class: 'btn', title: tool.command, onClick: () => run(tool) }, tool.label)))));
+  return group(`Toolkit · ${project.scan.pm}`, project.scan.tools.map((tool) => h('div', { class: 'setting tool' },
+    h('div', { class: 'meta' },
+      h('div', { class: 'title' }, tool.label, h('code', { class: 'mono', title: tool.command }, tool.command)),
+      h('div', { class: 'sub' }, tool.note)),
+    tool.label === 'Clean reinstall'
+      ? confirmButton('clean', 'Run', 'Delete node_modules?', () => run(tool))
+      : h('button', { class: 'btn', onClick: () => run(tool) }, 'Run'))));
 }
 
 const customKey = (script) => `custom:${script.id}`; // the key scriptsOf gives it
 
-/** Takes effect from the script's next start. */
-const keepAliveSwitch = (project, key) => h('input', {
-  type: 'checkbox', class: 'switch', role: 'switch', checked: project.keepAlive.includes(key),
-  title: 'Restart if it crashes', 'aria-label': 'Restart if it crashes',
-  onChange: (event) => {
-    project.keepAlive = project.keepAlive.filter((k) => k !== key).concat(event.target.checked ? [key] : []);
-    saveProject(project);
-  },
-});
+const sectionHead = (title, ...actions) => h('div', { class: 'section-head' }, h('h2', {}, title), actions);
+
+/** An x that asks first: its second click, on "Delete?", deletes. */
+function deleteButton(id, title, onConfirm) {
+  if (confirming === id) return confirmButton(id, '', 'Delete?', onConfirm);
+  return iconButton('close', title, () => { confirming = id; render(); }, 'danger reveal');
+}
+
+/** A toggle, lit while on, like the pin. Takes effect from the script's next start. */
+function keepAliveButton(project, key) {
+  const on = project.keepAlive.includes(key);
+  const button = iconButton('pulse', 'Restart if it crashes', async () => {
+    project.keepAlive = on ? project.keepAlive.filter((k) => k !== key) : [...project.keepAlive, key];
+    await saveProject(project);
+    render();
+  }, on ? 'alive' : 'reveal');
+  button.setAttribute('aria-pressed', String(on));
+  return button;
+}
+
+async function deleteCustom(project, script) {
+  project.custom = project.custom.filter((c) => customKey(c) !== script.key);
+  project.keepAlive = project.keepAlive.filter((k) => k !== script.key);
+  for (const g of project.groups) g.scripts = g.scripts.filter((key) => key !== script.key);
+  await saveProject(project);
+  render();
+}
+
+/** Only the command is needed: the name defaults to its last two words. */
+async function saveCustom(project, edit) {
+  const command = edit.body.trim();
+  if (!command) return body.querySelector('.script-editor .mono')?.focus();
+  const name = edit.name.trim() || command.split(/\s+/).slice(-2).join(' ');
+  const script = project.custom.find((c) => customKey(c) === edit.key);
+  if (script) Object.assign(script, { name, command });
+  else project.custom.push({ id: crypto.randomUUID(), name, command });
+  editing = null;
+  await saveProject(project);
+  render();
+}
 
 function customSection(project) {
-  const save = () => saveProject(project);
-  const rows = project.custom.map((script) => h('div', { class: 'custom-row' },
-    h('input', {
-      value: script.name, 'aria-label': 'Script name', placeholder: 'Name',
-      onChange: (e) => { script.name = e.target.value; save(); },
-    }),
-    h('input', {
-      class: 'mono', value: script.command, 'aria-label': 'Command', placeholder: 'Command', spellcheck: 'false',
-      onChange: (e) => { script.command = e.target.value; save(); },
-    }),
-    h('div', { class: 'actions' },
-      keepAliveSwitch(project, customKey(script)),
-      iconButton('play', 'Run', () => launch(project, { ...script, key: customKey(script) }), 'go'),
-      iconButton('close', 'Delete', async () => {
-        project.custom = project.custom.filter((s) => s !== script);
-        project.keepAlive = project.keepAlive.filter((k) => k !== customKey(script));
-        for (const group of project.groups) group.scripts = group.scripts.filter((key) => key !== customKey(script));
-        await save();
-        render();
-      }, 'danger'))));
-
-  const name = h('input', { placeholder: 'Name', 'aria-label': 'New script name' });
-  const command = h('input', {
-    class: 'mono', placeholder: 'pnpm -F @acme/app run start', 'aria-label': 'New script command', spellcheck: 'false',
-  });
-  const add = async (event) => {
-    event.preventDefault();
-    if (!command.value.trim()) return command.focus();
-    const label = name.value.trim() || command.value.trim().split(/\s+/).slice(-2).join(' ');
-    project.custom.push({ id: crypto.randomUUID(), name: label, command: command.value.trim() });
-    await save();
-    render();
-  };
+  const scripts = scriptsOf(project).filter((s) => s.custom);
+  const adding = editing?.key === 'new-custom';
   return h('section', {},
-    h('h2', {}, 'Custom scripts'),
-    rows,
-    h('form', { class: 'add-row', onSubmit: add }, name, command, h('button', { class: 'btn' }, 'Add')));
+    sectionHead('Custom scripts',
+      iconButton('plus', 'Add a custom script', () => openEditor({ key: 'new-custom', custom: true, name: '', body: '' }))),
+    scripts.length || adding
+      ? h('div', { class: 'group list' }, scripts.map((s) => scriptRow(project, s)), adding && scriptEditor(project))
+      : h('p', { class: 'note' }, "Commands that aren't in package.json, like docker compose up. They show in the menu bar."));
+}
+
+/** Starts a group's scripts, leaving the ones already running be, and shows the first one's output. */
+async function runGroup(project, scripts) {
+  const [id] = await Promise.all(scripts.map((script) => runScript(project, script)));
+  await call('open_terminal', { id });
+}
+
+// Each group's Add script menu, kept across renders so it stays open, with what's typed, as the page redraws.
+const pickers = new Map();
+
+function addPicker(projectId, groupId) {
+  if (!pickers.has(groupId)) {
+    pickers.set(groupId, combo({
+      label: 'Add a script to this group', glyph: 'plus', placeholder: 'Find a script…',
+      // The page may have reloaded since the menu was made, so the project is looked up afresh.
+      onPick: async (key) => {
+        const project = projects.find((p) => p.id === projectId);
+        const target = project?.groups.find((g) => g.id === groupId);
+        if (!target) return;
+        target.scripts.push(key);
+        await saveProject(project);
+        render();
+      },
+    }));
+  }
+  return pickers.get(groupId);
+}
+
+function groupBlock(project, group) {
+  const { scripts, missing } = groupScripts(project, group);
+  const save = async () => { await saveProject(project); render(); };
+  const member = (key, label, gone = false) => h('span', {
+    class: `member ${gone ? 'warn' : ''}`, title: gone && 'Not in package.json any more',
+  },
+    label,
+    iconButton('close', `Take ${label} out of the group`, () => {
+      group.scripts = group.scripts.filter((k) => k !== key);
+      save();
+    }));
+  const picker = addPicker(project.id, group.id);
+  const others = scriptsOf(project).filter((s) => !group.scripts.includes(s.key));
+  picker.set(others.map((s) => ({ value: s.key, text: scriptLabel(s) })), 'Add script');
+  return h('div', { class: 'script-group', 'data-group': group.id },
+    h('div', { class: 'group-head' },
+      h('input', {
+        class: 'group-name', value: group.name, 'aria-label': 'Group name', spellcheck: 'false',
+        onChange: (e) => { group.name = e.target.value.trim() || group.name; e.target.value = group.name; save(); },
+      }),
+      scripts.length > 0 && iconButton('play', 'Run group', () => runGroup(project, scripts), 'go'),
+      deleteButton(`group:${group.id}`, 'Delete group', () => {
+        project.groups = project.groups.filter((g) => g !== group);
+        save();
+      })),
+    h('div', { class: 'members' },
+      scripts.map((s) => member(s.key, scriptLabel(s))),
+      missing.map((key) => member(key, missingLabel(key), true)),
+      picker.el));
 }
 
 function groupsSection(project) {
-  const save = () => saveProject(project);
-  const scripts = scriptsOf(project);
-  const blocks = project.groups.map((group) => {
-    const tick = (key, label, props) => h('label', props,
-      h('input', {
-        type: 'checkbox',
-        checked: group.scripts.includes(key),
-        onChange: (e) => {
-          group.scripts = e.target.checked ? [...group.scripts, key] : group.scripts.filter((k) => k !== key);
-          save();
-        },
-      }),
-      label);
-    return h('div', { class: 'group script-group' },
-      h('div', { class: 'inline' },
-        h('input', {
-          value: group.name, 'aria-label': 'Group name', placeholder: 'Name',
-          onChange: (e) => { group.name = e.target.value.trim() || group.name; e.target.value = group.name; save(); },
-        }),
-        iconButton('close', 'Delete group', async () => {
-          project.groups = project.groups.filter((g) => g !== group);
-          await save();
-          render();
-        }, 'danger')),
-      h('div', { class: 'ticks' },
-        scripts.map((s) => tick(s.key, scriptLabel(s), { title: s.command })),
-        groupScripts(project, group).missing.map((key) => tick(key, missingLabel(key), { class: 'warn' }))));
-  });
-
-  const name = h('input', { placeholder: 'Group name', 'aria-label': 'New group name' });
-  const add = async (event) => {
-    event.preventDefault();
-    if (!name.value.trim()) return name.focus();
-    project.groups.push({ id: crypto.randomUUID(), name: name.value.trim(), scripts: [] });
-    await save();
+  const add = async () => {
+    const id = crypto.randomUUID();
+    project.groups.push({ id, name: 'New group', scripts: [] });
+    await saveProject(project);
     render();
+    body.querySelector(`[data-group="${id}"] .group-name`)?.select();
   };
   return h('section', {},
-    h('h2', {}, 'Groups'),
-    blocks,
-    h('form', { class: 'inline', onSubmit: add }, name, h('button', { class: 'btn' }, 'Add')),
-    !project.groups.length && h('p', { class: 'note' }, 'Start and stop several scripts from one row in the menu bar.'));
+    sectionHead('Groups', iconButton('plus', 'New group', add)),
+    project.groups.length
+      ? h('div', { class: 'group groups' }, project.groups.map((g) => groupBlock(project, g)))
+      : h('p', { class: 'note' }, 'Start and stop several scripts from one row in the menu bar.'));
 }
 
 function openEditor(state) {
@@ -373,35 +407,41 @@ function scriptEditor(project) {
   });
   return h('form', {
     class: 'custom-row script-editor',
-    onSubmit: (event) => { event.preventDefault(); saveScript(project, edit, [edit.name, edit.body]); },
+    onSubmit: (event) => {
+      event.preventDefault();
+      if (edit.custom) saveCustom(project, edit);
+      else saveScript(project, edit, [edit.name, edit.body]);
+    },
     onKeydown: (event) => { if (event.key === 'Escape') closeEditor(); },
   },
-  field('name', { placeholder: 'Script name' }),
-  field('body', { placeholder: 'Command', class: 'mono' }),
+  field('name', { placeholder: edit.custom ? 'Name (optional)' : 'Script name' }),
+  field('body', { placeholder: edit.custom ? 'docker compose up' : 'Command', class: 'mono' }),
   h('div', { class: 'actions' },
     h('button', { class: 'btn primary' }, 'Save'),
     h('button', { class: 'btn', type: 'button', onClick: closeEditor }, 'Cancel')));
 }
 
+/** A package.json script, or a custom one, which is always in the menu so has no pin. */
 function scriptRow(project, script) {
   if (editing?.key === script.key) return scriptEditor(project);
   const pinned = project.pinned.includes(script.key);
-  const deleting = `delete:${script.key}`;
   return h('div', { class: 'row' },
-    iconButton(pinned ? 'starred' : 'star', pinned ? 'Unpin' : 'Pin to menu', async () => {
-      await togglePin(project, script);
-      render();
-    }, pinned ? 'pinned' : ''),
+    script.custom
+      ? h('span', { class: 'kind' }, icon('terminal'))
+      : iconButton(pinned ? 'starred' : 'star', pinned ? 'Unpin' : 'Pin to menu', async () => {
+        await togglePin(project, script);
+        render();
+      }, pinned ? 'pinned' : ''),
     h('div', { class: 'meta' },
       h('div', { class: 'title' }, script.name),
       h('div', { class: 'sub mono', title: script.body }, script.body)),
-    keepAliveSwitch(project, script.key),
+    keepAliveButton(project, script.key),
     iconButton('pencil', 'Edit script', () => openEditor({
-      key: script.key, package: script.package, old: script.name, name: script.name, body: script.body,
-    })),
-    confirming === deleting
-      ? confirmButton(deleting, '', 'Delete?', () => saveScript(project, { package: script.package, old: script.name }, null))
-      : iconButton('close', 'Delete from package.json', () => { confirming = deleting; render(); }, 'danger'),
+      key: script.key, custom: script.custom, package: script.package, old: script.name, name: script.name, body: script.body,
+    }), 'reveal'),
+    deleteButton(`delete:${script.key}`, script.custom ? 'Delete script' : 'Delete from package.json', () => (script.custom
+      ? deleteCustom(project, script)
+      : saveScript(project, { package: script.package, old: script.name }, null))),
     iconButton('play', `Run: ${script.command}`, () => launch(project, script), 'go'));
 }
 
@@ -409,7 +449,7 @@ const addScript = (pkg) => openEditor({ key: 'new', package: pkg, old: null, nam
 
 const packageTitle = (pkg) => h('div', { class: 'package-title', title: pkg },
   h('span', {}, shortPackage(pkg)),
-  iconButton('plus', `Add a script to ${pkg}`, () => addScript(pkg)));
+  iconButton('plus', `Add a script to ${pkg}`, () => addScript(pkg), 'reveal'));
 
 function scriptList(project) {
   const terms = filter.toLowerCase().split(/\s+/).filter(Boolean);
@@ -417,7 +457,7 @@ function scriptList(project) {
     const text = `${s.package ?? ''} ${s.name} ${s.body}`.toLowerCase();
     return terms.every((term) => text.includes(term));
   });
-  const adding = editing?.old === null;
+  const adding = editing?.key === 'new';
   let last;
   // shortcut: a workspace package with no scripts gets no heading to add one from, list packages in the scan if that matters.
   const rows = found.slice(0, MAX_ROWS).flatMap((script) => {
@@ -433,21 +473,19 @@ function scriptList(project) {
   if (found.length > MAX_ROWS) {
     rows.push(h('p', { class: 'note' }, `Showing ${MAX_ROWS} of ${found.length}. Filter to narrow it down.`));
   }
-  return rows.length ? rows : [h('p', { class: 'note' }, 'No matching scripts.')];
+  return rows.length ? rows : [h('p', { class: 'note' }, terms.length ? 'No matching scripts.' : 'No scripts yet.')];
 }
 
 function scriptsSection(project) {
   const total = project.scan.scripts.length;
-  const results = h('div', {}, scriptList(project));
+  const results = h('div', { class: 'group list' }, scriptList(project));
   return h('section', {},
-    h('div', { class: 'section-head' },
-      h('h2', {}, `package.json scripts (${total})`),
+    sectionHead(`package.json scripts (${total})`,
+      total > 10 && h('label', { class: 'search' }, icon('search'), h('input', {
+        type: 'search', placeholder: 'Filter', value: filter, 'aria-label': 'Filter scripts', spellcheck: 'false',
+        onInput: (e) => { filter = e.target.value; results.replaceChildren(...scriptList(project)); },
+      })),
       iconButton('plus', 'Add a script', () => addScript(null))),
-    total > 10 && h('input', {
-      class: 'filter', type: 'search', placeholder: 'Filter by package or script…', value: filter,
-      'aria-label': 'Filter scripts', spellcheck: 'false',
-      onInput: (e) => { filter = e.target.value; results.replaceChildren(...scriptList(project)); },
-    }),
     results);
 }
 
