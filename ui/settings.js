@@ -28,6 +28,7 @@ let confirming = null; // the destructive action waiting for its second click
 let editing = null; // the package.json script being changed: { key, package, old, name, body }; old is null for a new one
 let recording = false; // the shortcut button is waiting for keys
 let launchAtLogin = false;
+let notifications = 'granted'; // whether macOS shows ScriptDeck's: 'granted', 'denied' or 'prompt' (not asked yet)
 let checking = false; // Check for Updates is waiting on GitHub
 let upToDate = false; // and found nothing newer
 const mcpCommand = await invoke('mcp_command'); // null on Windows, where agents can't connect yet
@@ -40,9 +41,10 @@ document.body.append(h('div', { class: 'settings' }, sidebar, h('main', { class:
 const selected = () => projects.find((p) => p.id === selectedId);
 
 async function load() {
-  [projects, versions, launchAtLogin, settings, version] = await Promise.all([
+  // Read again at every focus, so coming back from System Settings shows the change.
+  [projects, versions, launchAtLogin, settings, version, notifications] = await Promise.all([
     listProjects(), invoke('node_versions'), invoke('login_item'), invoke('settings'),
-    window.__TAURI__.app.getVersion(),
+    window.__TAURI__.app.getVersion(), invoke('notification_permission'),
   ]);
   if (selectedId !== GENERAL && selectedId !== CLONE && !selected()) selectedId = projects[0]?.id ?? null;
   render();
@@ -175,6 +177,23 @@ function agentsGroup() {
     setting('Add to Claude Code', h('span', { class: 'command mono' }, mcpCommand), copy));
 }
 
+/** Only while macOS holds the notifications back. It asks once; after a no, only System Settings can allow them. */
+function permissionRow() {
+  if (notifications === 'granted') return null;
+  const denied = notifications === 'denied';
+  return setting(denied ? 'Notifications are off for ScriptDeck' : 'Allow notifications',
+    h('div', { class: 'warn' }, denied
+      ? 'macOS is blocking them. Switch them on in System Settings to get the ones below.'
+      : 'macOS shows the ones below only once you allow them.'),
+    h('button', {
+      class: 'btn primary',
+      onClick: async () => {
+        notifications = await call('allow_notifications').catch(() => notifications);
+        render();
+      },
+    }, denied ? 'Open System Settings' : 'Allow'));
+}
+
 function renderGeneral() {
   const fontSize = h('select', {
     'aria-label': 'Terminal font size',
@@ -192,8 +211,12 @@ function renderGeneral() {
     group('Keyboard',
       setting('Open ScriptDeck', 'Shows the menu bar window from any app.', shortcutField())),
     group('Notifications',
+      permissionRow(),
       switchSetting('Notify when a script fails', 'Not when you stop it, or while its terminal is in front.',
         settings.notifyOnFailure, (notifyOnFailure) => saveSettings({ notifyOnFailure })),
+      switchSetting('Notify when tests pass or fail',
+        'However long they take: scripts with test, e2e, vitest or jest in their name or command.',
+        settings.notifyOnTests, (notifyOnTests) => saveSettings({ notifyOnTests })),
       switchSetting('Notify when a long script finishes', 'After 30 seconds or more. Not while its terminal is in front.',
         settings.notifyOnFinish, (notifyOnFinish) => saveSettings({ notifyOnFinish }))),
     group('Appearance',

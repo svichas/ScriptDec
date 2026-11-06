@@ -36,6 +36,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 - **Node per project.** Follows `.nvmrc`, `.node-version` or a Volta pin (including up the tree), or pick any version installed with nvm, fnm or Volta. Missing versions get an install button.
 - **Edit `package.json` scripts.** Add, change, rename or delete them, for the root or any workspace package. Key order, indentation and line endings stay as they were.
 - **Crash notifications.** A system notification when a script fails on its own. Stopping one yourself doesn't count, and neither does a failure you're watching in the terminal window.
+- **Test results.** A notification when tests pass or fail, however quick: any script with test, e2e, vitest or jest in its name or command. Watch modes never end, so they stay quiet.
 - **Restart on crash.** Switch it on per script in Settings, and a script that dies on its own comes back after 1 s, then 2, 4, 8 and 16 s. If all five restarts crash within a minute of starting, it stays down. You get one notification as it starts restarting and one if it gives up. Stopping it yourself never restarts it.
 - **Durations.** Each script shows how long it has been running, or how long it took. Installs, builds and anything else that take 30 seconds or more post a notification when they finish, unless their terminal is in front.
 - **Toolkit.** Install, outdated, update, audit and clean reinstall, for pnpm, yarn, npm and bun.
@@ -50,7 +51,7 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 </picture>
 
 - **Projects.** Add a folder with the + button, clone a repository with the button beside it, or drop folders on the window. Each project has its Node version, toolkit, git branch and worktrees, custom commands, groups and `package.json` scripts.
-- **Preferences.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDeck from any app, crash and long-task notifications on or off, a light, dark or system theme, the terminal font size, AI agent access (MCP), and Check for Updates.
+- **Preferences.** Launch at login, reopening running scripts after a restart, a global shortcut that opens ScriptDeck from any app, crash, test and long-task notifications on or off (with an Allow button while macOS blocks them), a light, dark or system theme, the terminal font size, AI agent access (MCP), and Check for Updates.
 
 ## Install
 
@@ -100,6 +101,7 @@ ScriptDeck is a [Tauri 2](https://tauri.app) app: Rust for the processes, plain 
 - `src-tauri/src/update.rs` updates the app from the latest GitHub release's `latest.json`, through the [Tauri updater](https://tauri.app/plugin/updater/). It only installs packages signed with the key whose public half is in `tauri.conf.json`.
 - `src-tauri/src/git/` runs the `git` command line: `mod.rs` for branches, worktrees, pull and clone, `parse.rs` for reading what git prints, and `commands.rs` for what the windows ask. A project's `worktree` is the folder its scripts run in, and a script runs once per folder. Git gets your login shell's `PATH` and the project's Node, so hooks such as husky's work as in a terminal. Pulls are fast-forward only, git never waits on a password prompt (it uses your credential helper or SSH agent, or says why it can't), and a worktree is never removed while it has uncommitted or untracked files, another worktree inside it, or scripts running in it.
 - `src-tauri/src/mcp.rs` is the MCP server for AI agents. `ScriptDeck --mcp`, which an agent launches, pipes its stdio to a Unix socket the app opens in its config folder while the switch is on. Only your user can open the socket, and no network port is opened.
+- `src-tauri/src/permission.rs` asks macOS whether ScriptDeck may post notifications, since the notification plugin answers "granted" on every desktop. Only a bundled build can ask, and `pnpm dev` posts as Terminal, so there Settings always shows them as allowed.
 - Projects and settings are stored in `config.json` in the app config folder (`~/Library/Application Support/com.scriptdec.desktop/` on macOS). The bundle identifier keeps the app's old name, ScriptDec: changing it would move this folder, and installed apps would lose their projects and settings.
 
 ## Contributing
