@@ -118,17 +118,31 @@ fn walk(root: &Path, dir: &Path, depth: usize, inc: &[Pattern], exc: &[Pattern],
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') || SKIP_DIRS.contains(&name.as_ref()) || !entry.path().is_dir() {
+        // Test tools' folders, like __snapshots__ and __mocks__, never hold a package.
+        let tooling = name.starts_with("__") && name.ends_with("__");
+        if name.starts_with('.') || SKIP_DIRS.contains(&name.as_ref()) || tooling {
             continue;
         }
         let path = entry.path();
+        // The kind comes with the entry, so only a link costs a stat; it's followed, as is_dir() does.
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir() || (kind.is_symlink() && path.is_dir()));
         let rel = path.strip_prefix(root).unwrap_or(&path);
+        if !is_dir || !inc.iter().any(|pattern| on_the_way(pattern.as_str(), rel)) {
+            continue;
+        }
         let matches = |list: &[Pattern]| list.iter().any(|p| p.matches_path_with(rel, options));
         if matches(inc) && !matches(exc) && path.join("package.json").is_file() {
             found.push(path.clone());
         }
         walk(root, &path, depth - 1, inc, exc, found);
     }
+}
+
+/// Whether a folder can hold what `pattern` matches: it's on the way to the folders the pattern starts with, like
+/// packages for packages/*, or inside them. A monorepo's other folders aren't walked.
+fn on_the_way(pattern: &str, rel: &Path) -> bool {
+    let start = pattern.split('/').take_while(|part| !part.contains(['*', '?', '[', '{']));
+    rel.components().zip(start).all(|(folder, part)| folder.as_os_str() == part)
 }
 
 /// Leaves ordinary names readable and quotes anything a shell could interpret.
@@ -389,6 +403,23 @@ mod tests {
         let scan = scan(&project(&dir));
         let commands: Vec<_> = scan.scripts.iter().map(|s| s.command.as_str()).collect();
         assert_eq!(commands, ["npm run t -w a"]);
+    }
+
+    #[test]
+    fn walks_only_toward_the_folders_a_pattern_starts_with() {
+        assert!(on_the_way("shared/ui/plugins/**", Path::new("shared/ui")));
+        assert!(on_the_way("shared/ui/plugins/**", Path::new("shared/ui/plugins/a/b")));
+        assert!(!on_the_way("shared/ui/plugins/**", Path::new("shared/other")));
+        assert!(!on_the_way("packages/*", Path::new("docs")));
+        assert!(on_the_way("*/tools", Path::new("anything")));
+
+        let dir = repo("prune");
+        for package in ["shared/ui/plugins/x", "shared/other/y", "apps/a", "libs/tools", "docs/z"] {
+            write(dir.join(package).join("package.json"), json!({}));
+        }
+        let patterns = ["shared/ui/plugins/**", "apps/*", "*/tools"].map(String::from);
+        let found = find_packages(&dir, &patterns);
+        assert_eq!(found, [dir.join("apps/a"), dir.join("libs/tools"), dir.join("shared/ui/plugins/x")]);
     }
 
     #[test]

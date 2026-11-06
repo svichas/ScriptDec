@@ -1,4 +1,4 @@
-import { h, icon } from './shared.js';
+import { h, icon, matcher } from './shared.js';
 
 /**
  * A select you can search, drawn like the branch switcher: a button showing the choice, and under it a field and
@@ -38,10 +38,10 @@ export function combo({ label, glyph, placeholder, onPick }) {
 
   function draw() {
     const query = input.value.trim();
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const matches = matcher(query);
     // The name typed comes first, so Enter on "main" can't pick a longer one.
     shown = options
-      .filter((option) => terms.every((term) => option.text.toLowerCase().includes(term)))
+      .filter((option) => matches(option.text))
       .sort((a, b) => (b.text === query) - (a.text === query));
     cursor = Math.min(cursor, Math.max(shown.length - 1, 0));
     list.replaceChildren(...(shown.length

@@ -1,8 +1,7 @@
 import {
   call, dotClass, easeHeight, easeShut, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen,
-  listProjects, missingLabel,
-  nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, sessionFor as findSession, statusText,
-  toast, togglePin, urlLabel, usageLabel, withArgs,
+  listProjects, matcher, missingLabel, nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf,
+  sessionFor as findSession, statusText, store, stored, toast, togglePin, urlLabel, usageLabel, withArgs,
 } from './shared.js';
 import { branchChip, pull, pullLabel, switcher } from './git.js';
 import { updateBanner } from './update.js';
@@ -23,23 +22,17 @@ let git = {}; // project id → the branch it's on and its changes, for projects
 let picker = null; // the open switcher, under its project: { id, el, focus }
 let pulling = null; // the project whose Pull is running
 
-function loadCollapsed() {
-  try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
-}
-const collapsed = loadCollapsed();
+const collapsed = new Set(stored('collapsed') ?? []);
 function toggleCollapsed(id) {
   collapsed[collapsed.has(id) ? 'delete' : 'add'](id);
-  try { localStorage.setItem('collapsed', JSON.stringify([...collapsed])); } catch { /* only a convenience */ }
+  store('collapsed', [...collapsed]);
   render();
 }
 
 // The arguments field under a script's row: Shift+Enter on a search result, or Option-click on Run.
 let argsFor = null; // [project, script]
 const argsKey = (project, script) => `${project.id}:${script.key}`; // script keys repeat across projects
-function loadLastArgs() {
-  try { return JSON.parse(localStorage.getItem('lastArgs')) ?? {}; } catch { return {}; }
-}
-const lastArgs = loadLastArgs();
+const lastArgs = stored('lastArgs') ?? {};
 const argsInput = h('input', {
   class: 'mono', placeholder: '--watch', 'aria-label': 'Arguments', spellcheck: 'false', onKeydown: onArgsKey,
 });
@@ -90,7 +83,7 @@ function onArgsKey(event) {
   const [project, script] = argsFor;
   const args = argsInput.value.trim();
   lastArgs[argsKey(project, script)] = args;
-  try { localStorage.setItem('lastArgs', JSON.stringify(lastArgs)); } catch { /* only a convenience */ }
+  store('lastArgs', lastArgs);
   closeArgs();
   act(project, withArgs(project, script, args));
 }
@@ -302,18 +295,13 @@ function projectBlock(project) {
   ];
 }
 
-function matches(project, script, terms) {
-  const text = `${project.name} ${script.package ?? ''} ${script.name} ${script.command ?? ''}`.toLowerCase();
-  return terms.every((term) => text.includes(term));
-}
-
 function searchResults() {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = matcher(query);
   // A group, told apart by its list of scripts, ranks with the pinned scripts and ahead of its project's.
   const pinnedFirst = ([p, s]) => (s.scripts || s.custom || p.pinned.includes(s.key) ? 0 : 1);
   return projects
     .flatMap((project) => [...project.groups, ...scriptsOf(project)].map((item) => [project, item]))
-    .filter(([project, script]) => matches(project, script, terms))
+    .filter(([project, item]) => matches(`${project.name} ${item.package ?? ''} ${item.name} ${item.command ?? ''}`))
     .sort((a, b) => pinnedFirst(a) - pinnedFirst(b))
     .slice(0, MAX_RESULTS);
 }
@@ -374,9 +362,10 @@ async function loadSessions() {
 }
 
 async function refresh() {
+  const overview = invoke('git_overview'); // a git status per project: asked now, drawn once the rest is
   projects = await listProjects();
   await loadSessions();
-  git = await invoke('git_overview'); // a git status per project, so it fills in after
+  git = await overview;
   render();
 }
 
@@ -387,20 +376,26 @@ async function loadUsage() {
 }
 
 listen('sessions-changed', loadSessions);
-window.addEventListener('focus', () => { search.focus(); search.select(); refresh(); });
-// WebKit throttles timers in the hidden popover, so poll from focus to blur, which hides it.
-window.addEventListener('focus', () => { clearInterval(poll); poll = setInterval(loadUsage, 2000); loadUsage(); });
-window.addEventListener('blur', () => clearInterval(poll));
-// Times tick only while the window is shown: it hides on blur, and WebKit throttles timers in hidden windows.
+// Blur hides the popover, and WebKit throttles timers in hidden windows, so usage polls and times tick from focus
+// to blur.
 let ticker;
 window.addEventListener('focus', () => {
+  search.focus();
+  search.select();
+  refresh();
+  clearInterval(poll);
+  poll = setInterval(loadUsage, 2000);
+  loadUsage();
   clearInterval(ticker);
   ticker = setInterval(() => tickers.forEach((tick) => tick()), 1000);
 });
-window.addEventListener('blur', () => clearInterval(ticker));
-// Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
-window.addEventListener('blur', () => argsFor && closeArgs());
-window.addEventListener('blur', () => picker && closePicker());
+window.addEventListener('blur', () => {
+  clearInterval(poll);
+  clearInterval(ticker);
+  // Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
+  if (argsFor) closeArgs();
+  if (picker) closePicker();
+});
 // A click anywhere else in the window puts the switcher away, as a menu goes; a chip's click toggles it itself.
 // On the click, and while it's caught on its way down: rows' buttons stop it reaching the document, and closing on
 // mousedown would slide the list under the pointer before the button came up, so the click would miss.

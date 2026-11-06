@@ -1,7 +1,7 @@
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -134,7 +134,8 @@ type OnExit = Box<dyn Fn(&SessionView, bool) + Send + Sync>;
 
 #[derive(Default)]
 struct Inner {
-    sessions: HashMap<u32, Session>,
+    /// By id, which is the order they were first started in.
+    sessions: BTreeMap<u32, Session>,
     next_id: u32,
     /// The one session currently shown in the terminal window.
     sink: Option<(u32, Sink)>,
@@ -158,10 +159,7 @@ impl Sessions {
     }
 
     pub fn list(&self) -> Vec<SessionView> {
-        let inner = self.inner.lock().unwrap();
-        let mut list: Vec<_> = inner.sessions.iter().map(|(id, s)| s.view(*id)).collect();
-        list.sort_by_key(|s| s.id);
-        list
+        self.inner.lock().unwrap().sessions.iter().map(|(id, s)| s.view(*id)).collect()
     }
 
     /// Each live session's usage, by id. Runs `ps`, so windows only ask while they're shown.
@@ -204,13 +202,12 @@ impl Sessions {
             }
         };
 
-        let err = |e: Box<dyn std::fmt::Display>| e.to_string();
         let size = PtySize { rows: 30, cols: 120, pixel_width: 0, pixel_height: 0 };
-        let pair = native_pty_system().openpty(size).map_err(|e| err(Box::new(e)))?;
-        let mut child = pair.slave.spawn_command(shell_command(&spec)).map_err(|e| err(Box::new(e)))?;
+        let pair = native_pty_system().openpty(size).map_err(|e| e.to_string())?;
+        let child = pair.slave.spawn_command(shell_command(&spec)).map_err(|e| e.to_string())?;
         drop(pair.slave);
-        let reader = pair.master.try_clone_reader().map_err(|e| err(Box::new(e)))?;
-        let writer = pair.master.take_writer().map_err(|e| err(Box::new(e)))?;
+        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let pid = child.process_id().unwrap_or(0);
 
         let pty = Some(Pty { master: pair.master, writer });
@@ -243,74 +240,81 @@ impl Sessions {
         let this = self.clone();
         thread::spawn(move || this.pump(id, run, reader));
         let this = self.clone();
-        thread::spawn(move || {
-            let started = Instant::now();
-            let code = child.wait().ok().map(|s| s.exit_code() as i32);
-            let mut inner = this.inner.lock().unwrap();
-            let (mut exited, mut restart) = (None, None);
-            if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
-                let stopped = s.status == Status::Stopping || s.interrupted;
-                s.status = if stopped { Status::Stopped } else { Status::Exited };
-                s.code = code;
-                s.ended_at = Some(now_ms());
-                s.pty = None; // hangs up anything left behind in the terminal
-                let crashed = !stopped && code.is_some_and(|c| c != 0);
-                if crashed && s.spec.keep_alive {
-                    s.restart_in = backoff(waited, started.elapsed());
-                }
-                // A keep-alive script says once that it's restarting, and once more if it gives up.
-                let quiet = crashed && s.restart_in.is_some_and(|wait| wait != 1);
-                exited = (!stopped && !quiet).then(|| (s.view(id), crashed));
-                restart = s.restart_in.map(|wait| (wait, s.spec.clone()));
-            }
-            drop(inner);
-            (this.on_change)();
-            if let Some((session, failed)) = exited {
-                (this.on_exit)(&session, failed);
-            }
-            let Some((wait, spec)) = restart else { return };
-            thread::sleep(BACKOFF_STEP * wait);
-            // Stop, Ctrl-C, Dismiss and Quit take the restart back; a start by hand meanwhile made a newer run.
-            // shortcut: one landing between this check and start() is missed; check inside start() if that ever bites.
-            let inner = this.inner.lock().unwrap();
-            let due = inner.sessions.get(&id).is_some_and(|s| s.run == run && s.restart_in.is_some());
-            drop(inner);
-            if due && this.start(spec).is_err() {
-                this.stop(id); // e.g. its folder is gone: show it failed, not restarting forever
-            }
-        });
+        thread::spawn(move || this.watch(id, run, waited, child));
         (self.on_change)();
         Ok(id)
     }
 
+    /// Waits for a run to end and records how. A crashed keep-alive script then restarts, after its backoff.
+    fn watch(self: Arc<Self>, id: u32, run: u32, waited: Option<u32>, mut child: Box<dyn Child + Send + Sync>) {
+        let started = Instant::now();
+        let code = child.wait().ok().map(|s| s.exit_code() as i32);
+        let mut inner = self.inner.lock().unwrap();
+        let (mut exited, mut restart) = (None, None);
+        if let Some(s) = inner.sessions.get_mut(&id).filter(|s| s.run == run) {
+            let stopped = s.status == Status::Stopping || s.interrupted;
+            s.status = if stopped { Status::Stopped } else { Status::Exited };
+            s.code = code;
+            s.ended_at = Some(now_ms());
+            s.pty = None; // hangs up anything left behind in the terminal
+            let crashed = !stopped && code.is_some_and(|c| c != 0);
+            if crashed && s.spec.keep_alive {
+                s.restart_in = backoff(waited, started.elapsed());
+            }
+            // A keep-alive script says once that it's restarting, and once more if it gives up.
+            let quiet = crashed && s.restart_in.is_some_and(|wait| wait != 1);
+            exited = (!stopped && !quiet).then(|| (s.view(id), crashed));
+            restart = s.restart_in.map(|wait| (wait, s.spec.clone()));
+        }
+        drop(inner);
+        (self.on_change)();
+        if let Some((session, failed)) = exited {
+            (self.on_exit)(&session, failed);
+        }
+        let Some((wait, spec)) = restart else { return };
+        thread::sleep(BACKOFF_STEP * wait);
+        // Stop, Ctrl-C, Dismiss and Quit take the restart back; a start by hand meanwhile made a newer run.
+        // shortcut: one landing between this check and start() is missed; check inside start() if that ever bites.
+        let inner = self.inner.lock().unwrap();
+        let due = inner.sessions.get(&id).is_some_and(|s| s.run == run && s.restart_in.is_some());
+        drop(inner);
+        if due && self.start(spec).is_err() {
+            self.stop(id); // e.g. its folder is gone: show it failed, not restarting forever
+        }
+    }
+
     fn pump(&self, id: u32, run: u32, mut reader: Box<dyn Read + Send>) {
         let mut buf = [0u8; 16 * 1024];
+        // What this run's output hasn't shown yet. Unix only for the port: naming its owner needs lsof.
+        let (mut want_url, mut want_port) = (true, cfg!(unix));
         while let Ok(n) = reader.read(&mut buf) {
             if n == 0 {
                 break;
             }
             let chunk = &buf[..n];
+            // Read before taking the lock, which every script's output and every window waits on.
+            let url = if want_url { find_url(chunk) } else { None };
+            let busy_port = if want_port { find_busy_port(chunk) } else { None };
+            want_url &= url.is_none();
+            want_port &= busy_port.is_none();
             let mut inner = self.inner.lock().unwrap();
             let Inner { sessions, sink, .. } = &mut *inner;
             let Some(s) = sessions.get_mut(&id).filter(|s| s.run == run) else { break };
             s.scrollback.extend_from_slice(chunk);
             if s.scrollback.len() > 2 * SCROLLBACK {
-                s.scrollback.drain(..s.scrollback.len() - SCROLLBACK);
+                // From the start of a line, so a replay doesn't open on half an escape code.
+                let cut = s.scrollback.len() - SCROLLBACK;
+                let cut = s.scrollback[cut..].iter().position(|&b| b == b'\n').map_or(cut, |at| cut + at + 1);
+                s.scrollback.drain(..cut);
             }
             if let Some((_, send)) = sink.as_ref().filter(|(sink_id, _)| *sink_id == id) {
                 send(chunk);
             }
-            let found_url = s.url.is_none() && {
-                s.url = find_url(chunk);
-                s.url.is_some()
-            };
-            // Unix only: naming the port's owner needs lsof.
-            let found_port = cfg!(unix) && s.busy_port.is_none() && {
-                s.busy_port = find_busy_port(chunk);
-                s.busy_port.is_some()
-            };
+            let found = url.is_some() || busy_port.is_some();
+            s.url = s.url.take().or(url);
+            s.busy_port = s.busy_port.or(busy_port);
             drop(inner);
-            if found_url || found_port {
+            if found {
                 (self.on_change)();
             }
         }
@@ -690,24 +694,21 @@ fn strip_ansi(bytes: &[u8]) -> Vec<u8> {
 fn find_url(chunk: &[u8]) -> Option<String> {
     let text = strip_ansi(chunk); // Vite colours the port, which splits the URL
     let text = String::from_utf8_lossy(&text);
-    let hosts = ["localhost:", "127.0.0.1:", "0.0.0.0:", "[::1]:"];
-    let schemes = ["http://", "https://"];
-    let found = schemes.iter().flat_map(|scheme| hosts.iter().map(move |host| (*scheme, *host)));
-    found
-        .filter_map(|(scheme, host)| {
-            let at = text.find(&format!("{scheme}{host}"))?;
-            let rest = &text[at + scheme.len() + host.len()..];
-            let port: String = rest.chars().take_while(char::is_ascii_digit).collect();
-            port.parse::<u16>().ok()?;
-            let path: String = rest[port.len()..]
-                .chars()
-                .take_while(|c| c.is_ascii_graphic() && !"\"'<>`)".contains(*c))
-                .collect();
-            let path = path.trim_end_matches(['.', ',', ';', ':']);
-            Some((at, format!("{scheme}localhost:{port}{path}")))
-        })
-        .min_by_key(|(at, _)| *at)
-        .map(|(_, url)| url)
+    // One pass, as it reads every chunk until an address turns up, which for most scripts is never.
+    text.match_indices("://").find_map(|(at, _)| {
+        let scheme = ["https", "http"].into_iter().find(|scheme| text[..at].ends_with(scheme))?;
+        let rest = &text[at + 3..];
+        let hosts = ["localhost:", "127.0.0.1:", "0.0.0.0:", "[::1]:"];
+        let rest = &rest[hosts.into_iter().find(|host| rest.starts_with(host))?.len()..];
+        let port: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        port.parse::<u16>().ok()?;
+        let path: String = rest[port.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_graphic() && !"\"'<>`)".contains(*c))
+            .collect();
+        let path = path.trim_end_matches(['.', ',', ';', ':']);
+        Some(format!("{scheme}://localhost:{port}{path}"))
+    })
 }
 
 /// The port a script couldn't listen on. Servers that move to the next port say "is in use"
@@ -1024,6 +1025,15 @@ mod tests {
     }
 
     #[test]
+    fn trimmed_scrollback_starts_at_a_line() {
+        let sessions = new_sessions();
+        let id = sessions.start(spec("yes 0123456789 | head -c 3000000; echo tail-marker")).unwrap();
+        wait_for("exit", || view(&sessions, id).status == Status::Exited);
+        wait_for("tail", || output(&sessions, id).contains("tail-marker"));
+        assert!(output(&sessions, id).starts_with("0123456789"));
+    }
+
+    #[test]
     fn refuses_a_missing_folder() {
         let err = new_sessions().start(Spec { cwd: "/no/such/dir".into(), ..spec("true") });
         assert!(err.unwrap_err().contains("/no/such/dir"));
@@ -1058,6 +1068,7 @@ mod tests {
         assert_eq!(url("Local: http://0.0.0.0:5173/"), Some("http://localhost:5173/".into()));
         assert_eq!(url("nothing here, http://example.com:80"), None);
         assert_eq!(url("http://localhost:99999"), None);
+        assert_eq!(url("http://localhost:99999 failed, http://localhost:3001 then"), Some("http://localhost:3001".into()));
     }
 
     #[test]
@@ -1079,10 +1090,13 @@ mod tests {
     }
 
     #[test]
-    fn notes_the_port_a_script_could_not_take() {
+    fn notes_the_address_a_script_serves_and_the_port_it_could_not_take() {
         let sessions = new_sessions();
-        let id = sessions.start(spec("echo 'Port 5173 is already in use'; exit 1")).unwrap();
-        wait_for("busy port", || view(&sessions, id).busy_port == Some(5173));
+        let id = sessions.start(spec("echo 'Port 5173 is already in use'; echo 'Local: http://localhost:3000/'; exit 1")).unwrap();
+        wait_for("busy port and address", || {
+            let s = view(&sessions, id);
+            s.busy_port == Some(5173) && s.url.as_deref() == Some("http://localhost:3000/")
+        });
     }
 
     #[test]

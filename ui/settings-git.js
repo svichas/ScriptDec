@@ -1,4 +1,4 @@
-import { call, easeHeight, easeShut, h, icon, saveProject, toast } from './shared.js';
+import { call, easeHeight, easeShut, h, icon, saveProject, skeletonRows, toast } from './shared.js';
 import { combo } from './combo.js';
 import { branchChip, knownRepo, pull, pullLabel, readRepo, shortPath, switcher } from './git.js';
 import { group, setting } from './settings-ui.js';
@@ -191,10 +191,6 @@ function toggleTrees(details, body) {
   }
 }
 
-/** Rows the size of real ones, until the first read: the section is there, and can be scrolled to, at once. */
-const placeholderRows = () => [58, 44, 66].map((width) => h('div', { class: 'row skeleton', 'aria-hidden': 'true' },
-  h('span', { class: 'bar', style: `width: ${width}%` })));
-
 /** The section's frame: a summary that folds it, and what it folds. */
 function treesFrame(summary, body) {
   const details = h('details', { class: 'worktrees', id: 'worktrees', open: treesOpen },
@@ -216,8 +212,10 @@ function treesFrame(summary, body) {
 export function worktreesSection(project) {
   if (!project.isRepo) return null;
   const repo = repoOf(project);
+  // Until the first read, the section is there, and can be scrolled to, at once.
   if (repo === undefined) {
-    return treesFrame(h('h2', {}, 'Worktrees'), h('div', { class: 'trees-body' }, h('div', { class: 'group trees' }, placeholderRows())));
+    const rows = h('div', { class: 'group trees' }, skeletonRows([58, 44, 66]));
+    return treesFrame(h('h2', {}, 'Worktrees'), h('div', { class: 'trees-body' }, rows));
   }
   if (!repo) return null;
   seen.add(project.id);
