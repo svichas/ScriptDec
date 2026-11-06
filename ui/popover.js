@@ -1,9 +1,9 @@
 import {
   call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, listProjects, missingLabel,
-  nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
-  usageLabel, withArgs,
+  nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, sessionFor as findSession, statusText,
+  toast, togglePin, urlLabel, usageLabel, withArgs,
 } from './shared.js';
-import { branchName, branchPicker, pullLabel, pushLabel, syncText } from './git.js';
+import { branchChip, pull, pullLabel, switcher } from './git.js';
 import { updateBanner } from './update.js';
 
 const MAX_RESULTS = 60;
@@ -18,9 +18,9 @@ let results = [];
 let owners = new Map(); // session id → what holds its busy port
 let confirming = null; // the Free port button waiting for its second click
 const arm = (key) => { confirming = key; render(); };
-let git = {}; // project id → its branch and changes, for projects in a git repository
-let picker = null; // the open branch menu, under its project: { id, el, focus }
-let syncing = null; // the pull or push running, as `${project id}:${action}`
+let git = {}; // project id → the branch it's on and its changes, for projects in a git repository
+let picker = null; // the open switcher, under its project: { id, el, focus }
+let pulling = null; // the project whose Pull is running
 
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
@@ -59,8 +59,7 @@ const header = h('header', {},
   iconButton('gear', 'Settings', () => call('open_settings')));
 document.body.append(h('div', { class: 'panel' }, header, list, updateBanner));
 
-const sessionFor = (project, script) =>
-  sessions.find((s) => s.projectId === project.id && s.command === script.command);
+const sessionFor = (project, script) => findSession(sessions, project, script);
 
 const openTerminal = (id) => call('open_terminal', { id });
 
@@ -204,40 +203,21 @@ function groupRow(project, group, showProject, selected) {
     idle.length > 0 && iconButton('play', 'Run group', () => startGroup(project, group), 'go'));
 }
 
-/** The project's branch, its uncommitted changes and what's left to push or pull; a click opens the branch menu. */
-function branchChip(project) {
-  const status = git[project.id];
-  if (!status) return null;
-  const sync = [status.ahead && `↑${status.ahead}`, status.behind && `↓${status.behind}`].filter(Boolean).join(' ');
-  const changes = status.changes && `${status.changes} uncommitted change${status.changes === 1 ? '' : 's'}`;
-  const about = [`On ${branchName(status)}`, changes, syncText(status)].filter(Boolean).join(' · ');
-  return h('button', {
-    class: `branch ${picker?.id === project.id ? 'open' : ''}`,
-    title: about,
-    'aria-label': `${about}. Switch branch`,
-    'aria-expanded': String(picker?.id === project.id),
+/** Switched to a worktree other than the project's own folder. */
+const away = (project) => project.dir !== project.path;
+
+function chip(project) {
+  return git[project.id] && branchChip(project, git[project.id], {
+    open: picker?.id === project.id,
     onClick: (event) => { event.stopPropagation(); togglePicker(project); },
-  },
-  icon('branch'),
-  h('span', { class: 'name' }, branchName(status)),
-  status.changes > 0 && h('span', { class: 'dirty' }, String(status.changes)),
-  sync && h('span', { class: 'sync' }, sync));
+  });
 }
 
 function togglePicker(project) {
   if (picker?.id === project.id) return closePicker();
   picker = {
     id: project.id,
-    ...branchPicker(project, {
-      onSwitched: () => { closePicker(); refresh(); },
-      // A branch checked out in another worktree: show that worktree's project, added now if it's new.
-      onWorktree: (opened) => {
-        closePicker();
-        if (collapsed.has(opened.id)) toggleCollapsed(opened.id);
-        refresh();
-      },
-      onClose: closePicker,
-    }),
+    ...switcher(project, { onChange: () => { closePicker(); refresh(); }, onClose: closePicker }),
   };
   render();
   picker.focus();
@@ -249,26 +229,34 @@ function closePicker() {
   search.focus();
 }
 
-async function gitSync(project, action) {
-  syncing = `${project.id}:${action}`;
+async function runPull(project) {
+  pulling = project.id;
   render();
-  await call('git_sync', { projectId: project.id, action }).catch(() => {});
-  syncing = null;
+  await pull(project.id).catch(() => {});
+  pulling = null;
   await refresh();
 }
 
-/** Under the branch menu: pull and push, and Settings for committing and worktrees. */
+/** Under the switcher: Pull, and Settings for the worktrees. */
 function pickerFoot(project) {
-  const status = git[project.id];
-  const button = (action, label, busy) => h('button', {
-    class: 'btn', disabled: syncing != null, onClick: () => gitSync(project, action),
-  }, syncing === `${project.id}:${action}` ? busy : label);
-  const changes = status.changes && `Commit ${status.changes} file${status.changes === 1 ? '' : 's'}…`;
+  const label = pullLabel(git[project.id]);
   return h('div', { class: 'picker-foot' },
-    pullLabel(status) && button('pull', pullLabel(status), 'Pulling…'),
-    status.branch && button('push', pushLabel(status), 'Pushing…'),
+    label && h('button', { class: 'btn', disabled: pulling != null, onClick: () => runPull(project) },
+      pulling === project.id ? 'Pulling…' : label),
     h('span', { class: 'grow' }),
-    h('button', { class: 'link', onClick: () => call('open_settings', { project: project.id }) }, changes || 'Worktrees…'));
+    h('button', {
+      class: 'link', onClick: () => call('open_settings', { project: project.id, section: 'worktrees' }),
+    }, 'Manage worktrees…'));
+}
+
+/** A new worktree or a fresh clone has no node_modules yet, and its scripts would fail until it's installed. */
+function installNotice(project) {
+  const install = project.scan.tools.find((tool) => tool.label === 'Install');
+  const start = () => runScript(project, { name: install.label, command: install.command })
+    .then(() => toast(`Started ${install.command}. It's in Scripts above.`, 'info'), () => {});
+  return install && h('div', { class: 'hint inline install' },
+    h('span', { class: 'warn' }, away(project) ? 'Not installed in this worktree yet' : 'Not installed yet'),
+    h('button', { class: 'btn', 'data-tip': 'Runs in its own terminal', onClick: start }, install.command));
 }
 
 function projectBlock(project) {
@@ -284,10 +272,11 @@ function projectBlock(project) {
       h('button', { class: 'toggle', 'aria-expanded': String(open) },
         icon('chevron'),
         h('span', { class: 'name' }, project.name)),
-      branchChip(project),
+      chip(project),
       h('span', { class: `info ${node.wanted && !node.resolved ? 'warn' : ''}` }, error ? '' : `${pm} · ${nodeLabel(node)}`)),
     picker?.id === project.id && git[project.id] && h('div', { class: 'picker-box' }, picker.el, pickerFoot(project)),
     open && error && h('div', { class: 'hint warn' }, error),
+    open && !error && !project.scan.installed && installNotice(project),
     open && project.groups.map((group) => groupRow(project, group, false, false)),
     open && shown.map((script) => scriptRow(project, script, false, false)),
     open && hidden > 0 && h('div', { class: 'hint' }, `${hidden} more scripts, search to find them`),

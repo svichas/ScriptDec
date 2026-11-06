@@ -12,11 +12,13 @@
   --tint: #fdf1ea;
   --idle: #d6d1c8;
   --ok: #15803d;
+  --on-ok: #ffffff;
   --bad: #be1a45;
   --on-bad: #ffffff;
   --warn: #975a00;
   --star: #b7791f;
   --shadow: 0 1px 2px rgb(33 31 28 / 0.12);
+  --lift: 0 4px 14px rgb(33 31 28 / 0.18);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -31,11 +33,13 @@
     --tint: #3f2619;
     --idle: #4c4843;
     --ok: #5fd38d;
+    --on-ok: #1c1b19;
     --bad: #ff7a93;
     --on-bad: #1c1b19;
     --warn: #f5c542;
     --star: #f5c542;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    --lift: 0 4px 14px rgb(0 0 0 / 0.5);
   }
 }
 
@@ -50,8 +54,8 @@ body {
   -webkit-user-select: none;
   -webkit-font-smoothing: antialiased;
 }
-button, input, select, textarea { font: inherit; color: inherit; }
-input, select, textarea {
+button, input, select { font: inherit; color: inherit; }
+input, select {
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -60,7 +64,7 @@ input, select, textarea {
   -webkit-user-select: text;
 }
 input::placeholder { color: var(--fg-2); opacity: 0.8; }
-input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 button { background: none; border: 0; padding: 0; cursor: default; }
 button.icon, button.btn, .row, .item, .tab, .project-head { transition: background-color 0.12s, color 0.12s; }
@@ -137,23 +141,61 @@ button.btn.danger { color: var(--bad); }
 .empty button { margin-top: 12px; }
 .warn { color: var(--warn); }
 
-.toast {
+/* Notes on what just happened, stacked at the bottom of the window: see toast() */
+.pills {
   position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--bad);
-  color: var(--on-bad);
-  box-shadow: var(--shadow);
-  user-select: text;
-  -webkit-user-select: text;
-  z-index: 10;
-  white-space: pre-line; /* git's errors run to several lines */
-  max-height: 45vh;
-  overflow: auto;
+  left: 50%;
+  bottom: 14px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(380px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  pointer-events: none;
 }
+.pill {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 100%;
+  padding: 6px 13px 6px 9px;
+  border-radius: 16px;
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: var(--lift);
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: auto;
+  animation: pill-in 0.18s ease-out;
+  transition: opacity 0.18s, transform 0.18s;
+}
+.pill.success { background: var(--ok); color: var(--on-ok); }
+.pill.error { background: var(--bad); color: var(--on-bad); }
+.pill.leaving { opacity: 0; transform: translateY(4px); }
+.pill .glyph { flex: none; margin-top: 1px; }
+.pill .glyph svg { width: 14px; height: 14px; }
+/* git's errors run to several lines */
+.pill .text { min-width: 0; max-height: 40vh; overflow: auto; white-space: pre-line; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+@keyframes pill-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .pill { animation: none; transition: none; } }
+
+.tip {
+  position: fixed;
+  z-index: 40;
+  max-width: 260px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: var(--lift);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.tip[hidden] { display: none; }
 
 /* The last row of the popover and of Settings, so it never covers the list */
 .update {
@@ -258,7 +300,7 @@ body.popover { background: transparent; overflow: hidden; }
 .name-input { width: 100%; font-size: 18px; font-weight: 600; background: none; border-color: transparent; padding: 2px 6px; margin-left: -7px; }
 .name-input:hover { border-color: var(--line); }
 .path-row { display: flex; align-items: center; gap: 12px; margin-top: 2px; color: var(--fg-2); font-size: 12px; }
-.path-row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; -webkit-user-select: text; }
+.path-row .path { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; -webkit-user-select: text; }
 .link { color: var(--accent); }
 .link:hover { text-decoration: underline; }
 .inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -278,7 +320,7 @@ body.popover { background: transparent; overflow: hidden; }
 
 /* Settings: General */
 .group { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
-.group input, .group select, .group textarea { background: var(--bg); }
+.group input, .group select { background: var(--bg); }
 .setting { display: flex; align-items: center; gap: 16px; min-height: 50px; padding: 9px 14px; }
 .setting + .setting { border-top: 1px solid var(--line); }
 .setting .sub { margin-top: 1px; font-size: 12px; white-space: normal; }
@@ -320,7 +362,7 @@ body.dropping::after {
   pointer-events: none;
 }
 
-/* Git: the branch chip and menu in the popover, and the Git sections and Clone page in Settings */
+/* Git: the branch chip and switcher in the popover, and the Git, Worktrees and Clone pages in Settings */
 .branch {
   display: inline-flex;
   align-items: center;
@@ -338,45 +380,60 @@ body.dropping::after {
 }
 .project-head:hover .branch { background: var(--bg-3); }
 .branch:hover, .branch.open { background: var(--bg-3); color: var(--fg); }
+/* Switched to another worktree: its scripts run in another folder, so it stands out. */
+.branch.away, .project-head:hover .branch.away { background: var(--tint); color: var(--accent); }
+.branch.away:hover, .branch.away.open { box-shadow: inset 0 0 0 1px var(--accent); }
 .branch .glyph svg { width: 12px; height: 12px; }
 .branch .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.branch .dirty { display: inline-flex; align-items: center; gap: 2px; color: var(--warn); font-weight: 600; }
-.branch .dirty::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.branch .dirty { flex: none; width: 6px; height: 6px; margin: 0 1px; border-radius: 50%; background: var(--warn); }
 .branch .sync { white-space: nowrap; }
 .picker-box { margin: 2px 6px 8px 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow); overflow: hidden; }
 .group .picker-box { margin: 0 14px 12px; box-shadow: none; }
 .picker input { width: 100%; padding: 7px 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: var(--bg-2); }
-.picker-list { max-height: 216px; overflow-y: auto; padding: 4px; }
+.picker-list { max-height: 260px; overflow-y: auto; padding: 4px; }
+.picker-heading { padding: 8px 8px 2px; color: var(--fg-2); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.picker-heading:first-child { padding-top: 2px; }
+/* The Worktrees heading folds its group away */
+button.picker-heading.toggle { display: flex; align-items: center; gap: 3px; width: 100%; padding: 5px 6px 4px 4px; border-radius: 6px; text-align: left; }
+button.picker-heading.toggle:hover { background: var(--bg-2); color: var(--fg); }
+.picker-heading.toggle .glyph { transition: transform 0.12s; }
+.picker-heading.toggle .glyph svg { width: 12px; height: 12px; }
+.picker-heading.toggle.open .glyph { transform: rotate(90deg); }
+.picker-heading .tag { margin-left: auto; letter-spacing: 0; text-transform: none; }
 .picker .row { min-height: 30px; padding: 2px 8px; }
 .picker .row .glyph { color: var(--fg-2); }
-.picker.busy { opacity: 0.6; pointer-events: none; }
 .picker .hint { padding: 8px; }
+/* One line: the name, then where it is, dimmed */
+.meta.line { display: flex; align-items: baseline; gap: 8px; }
+.meta.line .title { flex: none; max-width: 65%; }
+.meta.line .sub { flex: 1; min-width: 0; }
 .tag { flex: none; padding: 1px 6px; border-radius: 8px; background: var(--bg-3); color: var(--fg-2); font-size: 10px; font-weight: 600; }
+.tag.on { color: var(--ok); }
 .picker-foot { display: flex; align-items: center; gap: 6px; padding: 6px; border-top: 1px solid var(--line); background: var(--bg-2); }
 .picker-foot .grow { flex: 1; }
 .picker-foot .btn { padding: 3px 10px; font-size: 12px; }
 .picker-foot .link { font-size: 12px; white-space: nowrap; }
-.setting > .glyph { color: var(--fg-2); }
-.setting .title .tag { margin-left: 6px; vertical-align: 1px; }
-.setting .sub.path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; -webkit-user-select: text; }
-.git-error { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; padding: 6px 6px 6px 12px; border: 1px solid var(--bad); border-radius: 8px; color: var(--bad); }
-.git-error pre { flex: 1; min-width: 0; max-height: 200px; margin: 4px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; user-select: text; -webkit-user-select: text; }
-.section-head .all { gap: 6px; font-size: 12px; color: var(--fg-2); }
-.section-head .all input, .change input { margin: 0; accent-color: var(--accent); }
-.changes .files { max-height: 300px; overflow-y: auto; padding: 4px 0; }
-.changes .files .note { padding: 4px 14px; }
-.change { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 2px 14px; }
-.change:hover { background: var(--bg-3); }
-.change .kind { flex: none; width: 12px; text-align: center; font: 700 11px ui-monospace, Menlo, Consolas, monospace; }
-.kind.ok { color: var(--ok); }
-.kind.warn { color: var(--warn); }
-.kind.bad { color: var(--bad); }
-.kind.accent { color: var(--accent); }
-.change .file { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.change .dir { margin-left: 8px; color: var(--fg-2); font-size: 12px; }
-.commit { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px 12px; border-top: 1px solid var(--line); }
-.commit textarea { width: 100%; min-height: 56px; resize: vertical; }
-.commit .note { margin: 0 0 0 auto; }
+.hint.install { padding: 0 8px 8px 28px; } /* under the project's name, like the port notice */
+.hint.install .btn { padding: 2px 9px; font: 11px ui-monospace, Menlo, Consolas, monospace; }
+/* Settings: the chip beside the project's folder opens the switcher over the page, like a menu */
+.page-head { position: relative; }
+.path-row .link { margin-left: auto; }
+.path-row .branch { flex: 0 1 auto; max-width: 240px; }
+.picker-box.dropdown { position: absolute; top: calc(100% - 6px); left: 22px; z-index: 15; width: min(460px, calc(100% - 44px)); margin: 0; box-shadow: var(--lift); }
+/* Settings: the worktrees, last on the page and folded away until opened */
+details.worktrees > summary { display: flex; align-items: center; gap: 4px; list-style: none; }
+details.worktrees > summary::-webkit-details-marker { display: none; }
+details.worktrees > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details.worktrees > summary h2 { margin: 0; }
+details.worktrees > summary .glyph { color: var(--fg-2); transition: transform 0.12s; }
+details.worktrees[open] > summary { margin-bottom: 8px; }
+details.worktrees[open] > summary .glyph { transform: rotate(90deg); }
+.group.trees { max-height: 196px; overflow-y: auto; padding: 4px; }
+.group.trees .row { min-height: 36px; padding: 2px 4px 2px 10px; }
+.group.trees .row .glyph { color: var(--fg-2); }
+.group.trees .row .btn { padding: 3px 10px; font-size: 12px; }
+.group.trees .row .note { margin: 0; padding: 0 8px; }
+.row.worktree.current { box-shadow: inset 2px 0 var(--accent); }
 .worktree-form { flex-wrap: nowrap; margin-top: 8px; }
 .worktree-form input { flex: 1; min-width: 0; }
 .worktree-form select { max-width: 180px; }
@@ -415,6 +472,7 @@ button.icon.on { background: var(--bg-3); color: var(--fg); }
 .tab { display: flex; align-items: center; gap: 6px; flex: none; max-width: 220px; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab:hover, .tab.active { background: var(--bg-3); }
 .tab.active { color: var(--fg); }
+.tab .where { color: var(--accent); font-size: 11px; } /* the worktree's branch, beside the script's name */
 #actions .warn { max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* leaves the tabs room in a narrow window */
 #screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; position: relative; }
 /* Above xterm's own layers, the highest of which is its scrollbar at 11 */

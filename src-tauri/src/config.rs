@@ -57,6 +57,16 @@ pub struct Project {
     pub keep_alive: Vec<String>,
     /// Scripts started and stopped together from one row in the menu bar.
     pub groups: Vec<Group>,
+    /// The worktree the project is switched to: its folder there, which scripts are read from and run in.
+    /// None is `path`.
+    pub worktree: Option<String>,
+}
+
+impl Project {
+    /// Where its scripts run: its folder in the worktree it's switched to, or `path` once that's gone.
+    pub fn dir(&self) -> &str {
+        self.worktree.as_deref().filter(|dir| Path::new(dir).is_dir()).unwrap_or(&self.path)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
@@ -74,6 +84,8 @@ pub struct ReopenScript {
     pub project_id: String,
     pub label: String,
     pub command: String,
+    /// The folder it ran in, which a worktree makes other than the project's; None from before worktrees.
+    pub cwd: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
@@ -127,15 +139,34 @@ mod tests {
     #[test]
     fn round_trips() {
         let path = temp_file("trip");
-        let project = Project { id: "a".into(), name: "ui".into(), ..Default::default() };
+        let project = Project { id: "a".into(), name: "ui".into(), worktree: Some("/src/ui-x".into()), ..Default::default() };
         let settings = Settings { reopen_scripts: true, ..Default::default() };
-        let script = ReopenScript { project_id: "a".into(), label: "dev".into(), command: "pnpm run dev".into() };
+        let script = ReopenScript {
+            project_id: "a".into(),
+            label: "dev".into(),
+            command: "pnpm run dev".into(),
+            cwd: Some("/src/ui-x".into()),
+        };
         save(&path, &Config { projects: vec![project], settings, reopen: vec![script] }).unwrap();
         let config = load(&path);
         assert_eq!(config.projects[0].name, "ui");
+        assert_eq!(config.projects[0].worktree.as_deref(), Some("/src/ui-x"));
         assert!(config.settings.reopen_scripts);
         let script = &config.reopen[0];
         assert_eq!((&*script.project_id, &*script.label, &*script.command), ("a", "dev", "pnpm run dev"));
+        assert_eq!(script.cwd.as_deref(), Some("/src/ui-x"));
+    }
+
+    #[test]
+    fn a_project_runs_in_its_worktree_until_that_folder_is_gone() {
+        let dir = temp_file("worktree-dir");
+        let worktree = dir.parent().unwrap().to_string_lossy().into_owned();
+        fs::create_dir_all(&worktree).unwrap();
+        let project = Project { path: "/src/app".into(), worktree: Some(worktree.clone()), ..Default::default() };
+        assert_eq!(project.dir(), worktree);
+        fs::remove_dir_all(&worktree).unwrap();
+        assert_eq!(project.dir(), "/src/app");
+        assert_eq!(Project { path: "/src/app".into(), ..Default::default() }.dir(), "/src/app");
     }
 
     #[test]

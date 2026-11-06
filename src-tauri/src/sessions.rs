@@ -21,10 +21,13 @@ pub struct Spec {
     pub project: String,
     pub label: String,
     pub command: String,
+    /// One script runs once per folder, so each worktree of a project can run it at the same time.
     pub cwd: String,
     pub node_bin: Option<PathBuf>,
     /// Restart it when it crashes.
     pub keep_alive: bool,
+    /// The branch of the worktree it runs in, when that isn't the project's own folder.
+    pub worktree: Option<String>,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Debug)]
@@ -55,6 +58,8 @@ pub struct SessionView {
     pub busy_port: Option<u16>,
     /// How long a crashed keep-alive script waits before it restarts, in seconds.
     pub restart_in: Option<u32>,
+    pub cwd: String,
+    pub worktree: Option<String>,
 }
 
 /// What listens on a port: a stray process, or one of our scripts.
@@ -114,6 +119,8 @@ impl Session {
             url: self.url.clone(),
             busy_port: self.busy_port,
             restart_in: self.restart_in,
+            cwd: self.spec.cwd.clone(),
+            worktree: self.spec.worktree.clone(),
         }
     }
 }
@@ -172,7 +179,7 @@ impl Sessions {
         roots.into_iter().filter_map(|(id, pid)| Some((id, tree_usage(&procs, pid, cores)?))).collect()
     }
 
-    /// Starts a script, or returns the session already running it.
+    /// Starts a script, or returns the session already running it in that folder.
     pub fn start(self: &Arc<Self>, spec: Spec) -> Result<u32, String> {
         if !Path::new(&spec.cwd).is_dir() {
             return Err(format!("Folder not found: {}", spec.cwd));
@@ -181,10 +188,11 @@ impl Sessions {
         if inner.quitting {
             return Err("ScriptDeck is quitting".into());
         }
+        let same = |s: &Spec| s.project_id == spec.project_id && s.command == spec.command && s.cwd == spec.cwd;
         let existing = inner
             .sessions
             .iter()
-            .find(|(_, s)| s.spec.project_id == spec.project_id && s.spec.command == spec.command)
+            .find(|(_, s)| same(&s.spec))
             .map(|(id, s)| (*id, s.status, s.run, s.restart_in));
         let (id, run, waited) = match existing {
             Some((id, Status::Running | Status::Stopping, ..)) => return Ok(id),
@@ -736,6 +744,7 @@ mod tests {
             cwd: std::env::temp_dir().to_string_lossy().into(),
             node_bin: None,
             keep_alive: false,
+            worktree: None,
         }
     }
 
@@ -843,14 +852,23 @@ mod tests {
     }
 
     #[test]
-    fn the_same_script_only_runs_once() {
+    fn the_same_script_only_runs_once_per_folder() {
         let sessions = new_sessions();
         let s = spec("sleep 30");
         let first = sessions.start(s.clone()).unwrap();
-        assert_eq!(sessions.start(s).unwrap(), first);
+        assert_eq!(sessions.start(s.clone()).unwrap(), first);
         assert_eq!(sessions.list().len(), 1);
-        sessions.stop(first);
-        wait_for("stop", || view(&sessions, first).status == Status::Stopped);
+        // The same script in another worktree is a run of its own.
+        let elsewhere = std::env::temp_dir().join(format!("scriptdeck-worktree-{}", std::process::id()));
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let worktree = Spec { cwd: elsewhere.to_string_lossy().into(), worktree: Some("feature".into()), ..s };
+        let second = sessions.start(worktree).unwrap();
+        assert_ne!(second, first);
+        assert_eq!(view(&sessions, second).worktree.as_deref(), Some("feature"));
+        for id in [first, second] {
+            sessions.stop(id);
+            wait_for("stop", || view(&sessions, id).status == Status::Stopped);
+        }
     }
 
     #[test]
