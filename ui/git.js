@@ -5,16 +5,16 @@ const MAX_BRANCHES = 50;
 // What git said last about each project's repository, by project id, so the switcher and Settings can draw it at
 // once and then what git says now, instead of a blank that jumps when it fills. Each project's read on its way
 // too, so a read started on hover is the one the click then uses.
-const known = new Map();
+const known = new Map(); // project id → { repo, ticket }
 const reading = new Map(); // project id → { read, ticket }
 let tickets = 0;
 
 /** A project's repository as last read: undefined before the first read, null outside a repository. */
-export const knownRepo = (projectId) => known.get(projectId);
+export const knownRepo = (projectId) => known.get(projectId)?.repo;
 
 /**
  * Reads a project's repository and remembers it. A read already on its way is shared, unless `fresh` asks for one
- * that starts now, as after a change. Only the newest read is remembered, however they finish.
+ * that starts now, as after a change. A read never overwrites one that started after it, however they finish.
  */
 export function readRepo(projectId, { fresh = false } = {}) {
   const going = reading.get(projectId);
@@ -23,10 +23,9 @@ export function readRepo(projectId, { fresh = false } = {}) {
   const newest = () => reading.get(projectId)?.ticket === ticket;
   const read = invoke('git_repo', { projectId }).then(
     (repo) => {
-      if (newest()) {
-        known.set(projectId, repo);
-        reading.delete(projectId);
-      }
+      // An earlier read that lands first is still newer than what's known, as when two removals end close together.
+      if (ticket > (known.get(projectId)?.ticket ?? 0)) known.set(projectId, { repo, ticket });
+      if (newest()) reading.delete(projectId);
       return repo;
     },
     (error) => {

@@ -15,6 +15,7 @@ const seen = new Set(); // projects whose git has been drawn, so it fades in onl
 let busy = null; // the git command running, as its button's label
 let picker = null; // the open switcher
 let removing = null; // the worktree whose Remove waits for its second click
+const removals = new Set(); // worktrees whose folders are being deleted, by path: each on its own, so several go at once
 let base = null; // where a new worktree's branch starts; null is the current branch
 let treesOpen = false; // the Worktrees section: secondary, so folded away until opened
 let reveal = false; // scroll to the Worktrees section once it's drawn
@@ -127,18 +128,50 @@ export function gitDropdown(project) {
 
 function removeButton(project, tree) {
   const armed = removing === tree.path;
-  const name = tree.branch ?? 'detached';
   return h('button', {
     class: `btn ${armed ? 'danger' : ''}`,
     disabled: busy != null,
     'data-tip': armed ? 'Click again to delete it' : 'Deletes its folder. Git refuses while it has changes.',
     onClick: () => {
       removing = armed ? null : tree.path;
-      if (!armed) return app.render();
-      gitAction('Removing…', () => call('git_remove_worktree', { projectId: project.id, path: tree.path }),
-        `Removed the ${name} worktree`);
+      if (armed) removeWorktree(project, tree);
+      else app.render();
     },
   }, icon('trash'), armed ? 'Delete its folder?' : 'Remove');
+}
+
+/** Deletes a worktree's folder, slow with node_modules in it. Only its row waits, saying so; the rest carries on. */
+async function removeWorktree(project, tree) {
+  removals.add(tree.path);
+  app.render();
+  try {
+    await call('git_remove_worktree', { projectId: project.id, path: tree.path });
+    toast(`Removed the ${tree.branch ?? 'detached'} worktree`, 'success');
+  } catch {
+    // call() has said why
+  }
+  // Read again before the row stops waiting, or a removed one would be back for a moment.
+  await app.load().finally(() => {
+    removals.delete(tree.path);
+    app.render();
+  });
+}
+
+/** A worktree row's end: Use and Remove, or that it's in use, or that it's going. */
+function treeEnd(project, tree) {
+  if (removals.has(tree.path)) {
+    return h('span', { class: 'note removing', role: 'status' },
+      h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Removing…');
+  }
+  return [
+    tree.current
+      ? h('span', { class: 'note in-use', 'data-tip': "This project's scripts run in this folder" }, icon('check'), 'In use')
+      : h('button', {
+        class: 'btn', disabled: busy != null, 'data-tip': "Run this project's scripts in this folder",
+        onClick: () => switchTo(project, tree),
+      }, icon('swap'), 'Use'),
+    !tree.main && removeButton(project, tree),
+  ];
 }
 
 /** Its scripts run in this worktree from now on; what's running elsewhere keeps running. */
@@ -190,20 +223,16 @@ export function worktreesSection(project) {
   seen.add(project.id);
   const main = repo.worktrees.find((tree) => tree.main) ?? repo.worktrees[0];
   const running = repo.worktrees.reduce((sum, tree) => sum + tree.running, 0);
-  const rows = repo.worktrees.map((tree) => h('div', { class: `row worktree ${tree.current ? 'current' : ''}` },
+  const rows = repo.worktrees.map((tree) => h('div', {
+    class: `row worktree ${tree.current ? 'current' : ''} ${removals.has(tree.path) ? 'removing' : ''}`,
+  },
     icon('worktree'),
     h('div', { class: 'meta line' },
       h('span', { class: 'title' }, tree.branch ?? 'detached HEAD'),
       h('span', { class: 'sub', title: tree.path }, shortPath(tree, main))),
     tree.main && h('span', { class: 'tag' }, 'main'),
     tree.running > 0 && h('span', { class: 'tag on' }, `${tree.running} running`),
-    tree.current
-      ? h('span', { class: 'note in-use', 'data-tip': "This project's scripts run in this folder" }, icon('check'), 'In use')
-      : h('button', {
-        class: 'btn', disabled: busy != null, 'data-tip': "Run this project's scripts in this folder",
-        onClick: () => switchTo(project, tree),
-      }, icon('swap'), 'Use'),
-    !tree.main && removeButton(project, tree)));
+    treeEnd(project, tree)));
 
   // HEAD, then every branch, the one checked out here chosen until another is.
   const start = base ?? repo.status.branch ?? '';

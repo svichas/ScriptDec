@@ -117,16 +117,22 @@ pub async fn git_remove_worktree(app: AppHandle, project_id: String, path: Strin
     let projects = state.config.lock().unwrap().projects.clone();
     let inside = |dir: &str| real(dir).starts_with(&tree);
     let gone: Vec<String> = projects.iter().filter(|p| inside(&p.path)).map(|p| p.id.clone()).collect();
-    let moved: Vec<String> =
-        projects.iter().filter(|p| p.worktree.as_deref().is_some_and(inside)).map(|p| p.id.clone()).collect();
+    let moved: Vec<Project> = projects.iter().filter(|p| p.worktree.as_deref().is_some_and(inside)).cloned().collect();
     git.remove_worktree(&path)?;
     state.edit(|config| {
-        config.projects.retain(|p| !gone.contains(&p.id));
-        for project in config.projects.iter_mut().filter(|p| moved.contains(&p.id)) {
-            project.worktree = None;
-        }
+        forget_worktree(&mut config.projects, &gone, &moved);
         Ok(())
     })
+}
+
+/// Once a worktree's folder is gone: the projects added from inside it go too, and the projects switched to it go
+/// back to their own folder. `moved` is those as they were before, so one switched elsewhere meanwhile stays there.
+fn forget_worktree(projects: &mut Vec<Project>, gone: &[String], moved: &[Project]) {
+    projects.retain(|p| !gone.contains(&p.id));
+    let still = |p: &Project| moved.iter().any(|m| m.id == p.id && m.worktree == p.worktree);
+    for project in projects.iter_mut().filter(|p| still(p)) {
+        project.worktree = None;
+    }
 }
 
 /// Clones a repository into a new folder in `parent` and adds it as a project.
@@ -135,4 +141,24 @@ pub async fn git_clone(app: AppHandle, url: String, parent: String) -> Result<Pr
     let dir = super::clone(&url, Path::new(&parent))?;
     let added = crate::add_project(app.state(), dir.to_string_lossy().into_owned());
     added.map_err(|e| format!("Cloned into {}, but it wasn't added: {e}", dir.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_project_switched_away_while_its_worktree_went_stays_put() {
+        let project = |id: &str, worktree: Option<&str>| Project {
+            id: id.into(),
+            worktree: worktree.map(Into::into),
+            ..Default::default()
+        };
+        let moved = [project("a", Some("/src/app-x")), project("b", Some("/src/app-x"))];
+        // b was switched to another worktree while app-x went, and c was added from inside app-x.
+        let mut projects = vec![project("a", Some("/src/app-x")), project("b", Some("/src/app-y")), project("c", None)];
+        forget_worktree(&mut projects, &["c".into()], &moved);
+        let left: Vec<_> = projects.iter().map(|p| (p.id.as_str(), p.worktree.as_deref())).collect();
+        assert_eq!(left, [("a", None), ("b", Some("/src/app-y"))]);
+    }
 }

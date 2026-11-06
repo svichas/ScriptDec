@@ -456,10 +456,15 @@ details.worktrees[open] > summary .glyph:first-child { transform: rotate(90deg);
 .group.trees .row > .glyph { color: var(--fg-2); }
 .group.trees .row .btn { gap: 5px; padding: 3px 10px; font-size: 12px; }
 .group.trees .row .note { margin: 0; padding: 0 8px; }
-.note.in-use { display: inline-flex; align-items: center; gap: 4px; }
+.note.in-use, .note.removing { display: inline-flex; align-items: center; gap: 4px; }
 .note.in-use .glyph { color: var(--ok); }
 .note.in-use .glyph svg { width: 13px; height: 13px; }
 .row.worktree.current { box-shadow: inset 2px 0 var(--accent); }
+/* A worktree whose folder is being deleted: only its row waits */
+.row.worktree.removing > :not(.note) { opacity: 0.5; }
+.spinner { flex: none; width: 11px; height: 11px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .worktree-form { flex-wrap: nowrap; margin-top: 8px; }
 .worktree-form input { flex: 1; min-width: 0; }
 /* A select you can search, drawn like the switcher: see combo.js */
