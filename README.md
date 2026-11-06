@@ -13,7 +13,7 @@ Dev servers, watchers and one-off tasks keep running in the background, each in 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/popover-dark.png">
-  <img src="docs/popover-light.png" width="380" alt="The ScriptDeck menu bar window: two dev servers running with links to their ports, a failed build, and each project's pinned scripts">
+  <img src="docs/popover-light.png" width="380" alt="The ScriptDeck menu bar window: the same dev server running in two worktrees, an API server and a failed build, then a project's branch, group and pinned scripts">
 </picture>
 
 </div>
@@ -47,7 +47,7 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/settings-dark.png">
-  <img src="docs/settings-light.png" width="860" alt="The Settings window: a project's Node version, toolkit, custom scripts and package.json scripts">
+  <img src="docs/settings-light.png" width="860" alt="The Settings window: a project's branch, custom scripts, group and package.json scripts">
 </picture>
 
 - **Projects.** Add a folder with the + button, clone a repository with the button beside it, or drop folders on the window. Each project has its Node version, toolkit, git branch and worktrees, custom commands, groups and `package.json` scripts.
