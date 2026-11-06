@@ -44,6 +44,8 @@ const PATHS = {
   pull: '<path d="M8 2.5v7.6M4.7 6.9 8 10.2l3.3-3.3M3 13.2h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
   swap: '<path d="M2.5 5.5h10M10 3l2.5 2.5L10 8M13.5 10.5h-10M6 8l-2.5 2.5L6 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
   trash: '<path d="M2.5 4.5h11M6.3 4.5V3.1a.8.8 0 0 1 .8-.8h1.8a.8.8 0 0 1 .8.8v1.4M4 4.5l.7 8.4a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.4M6.8 7v4.4M9.2 7v4.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>',
+  // A heartbeat, for a script that's restarted when it crashes.
+  pulse: '<path d="M1.5 8.5h2.8l1.6-4.5 3.2 8 1.6-3.5h3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
   // A box, for a package install.
   install: '<path d="M8 1.9 13.5 4.9v6.2L8 14.1l-5.5-3V4.9zM2.7 5 8 7.9 13.3 5M8 7.9v6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
 };

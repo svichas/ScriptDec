@@ -313,18 +313,6 @@ body.popover { background: transparent; overflow: hidden; }
 .link:hover { text-decoration: underline; }
 .inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .note { margin: 6px 0 0; color: var(--fg-2); font-size: 12px; }
-.custom-row, .add-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
-.custom-row .actions { display: flex; align-items: center; gap: 4px; }
-.script-editor { margin: 4px 0; }
-.section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.section-head h2 { margin: 0; }
-.page-body .filter { width: 100%; margin-bottom: 6px; }
-.package-title { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 2px; padding: 0 8px 0 12px; font-size: 12px; font-weight: 600; }
-.script-group { margin-bottom: 8px; padding: 8px 10px; }
-.script-group .inline input { flex: 1; }
-.ticks { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 12px; max-height: 200px; overflow-y: auto; margin-top: 6px; }
-.ticks label { padding: 3px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ticks input { margin: 0 6px 0 0; padding: 0; vertical-align: -2px; accent-color: var(--accent); }
 
 /* Settings: General */
 .group { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
@@ -488,6 +476,44 @@ button.btn.combo-button { justify-content: flex-start; min-width: 150px; max-wid
 .nav-title .tools { display: flex; gap: 2px; }
 button.icon.on { background: var(--bg-3); color: var(--fg); }
 .inline.center { justify-content: center; }
+
+/* Settings: a project's page. After the combo's rules, which the groups' Add script menu overrides. */
+.section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.section-head h2 { flex: 1; margin: 0; }
+.section-head .search { flex: 0 1 190px; }
+.section-head .search .glyph { left: 7px; }
+.section-head .search input { padding: 3px 8px 3px 27px; border-radius: 6px; }
+.tool .title code { margin-left: 8px; color: var(--fg-2); font-size: 11px; font-weight: 400; }
+/* Lists, boxed like Preferences' rows. Edit and delete show while the pointer or focus is on their row. */
+.group.list, .group.groups { padding: 4px; }
+.group.list .row { gap: 4px; min-height: 42px; padding: 3px 4px; }
+.group.list .row:hover { background: var(--bg-3); }
+.group.list > .note { margin: 0; padding: 10px 12px; }
+.row .kind { display: grid; place-items: center; flex: none; width: 26px; color: var(--fg-2); }
+button.icon.reveal { opacity: 0; transition: opacity 0.12s, background-color 0.12s, color 0.12s; }
+:is(.row, .package-title, .script-group):is(:hover, :focus-within) .reveal { opacity: 1; }
+button.icon.alive { color: var(--ok); }
+.package-title { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding: 8px 4px 2px 12px; border-top: 1px solid var(--line); color: var(--fg-2); font-size: 11px; font-weight: 600; }
+.package-title:first-child { margin-top: 0; border-top: 0; }
+.custom-row { display: grid; grid-template-columns: 150px 1fr auto; gap: 6px; align-items: center; padding: 5px 4px; }
+.custom-row .actions { display: flex; align-items: center; gap: 4px; }
+/* Groups: the name, the scripts in it as chips, and a menu to add more */
+.script-group { position: relative; padding: 6px 8px 10px 12px; }
+.script-group + .script-group { border-top: 1px solid var(--line); }
+.group-head { display: flex; align-items: center; gap: 4px; }
+.group .group-name { flex: 1; min-width: 0; margin-left: -7px; padding: 3px 6px; background: none; border-color: transparent; font-weight: 600; }
+.group .group-name:hover { border-color: var(--line); }
+.group .group-name:focus { background: var(--bg); }
+.members { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.member { display: inline-flex; align-items: center; gap: 1px; height: 24px; padding: 0 2px 0 9px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); font-size: 12px; }
+.member.warn { border-style: dashed; }
+.member button.icon { width: 20px; height: 20px; border-radius: 10px; }
+.member button.icon svg, .members .combo-button .glyph svg { width: 12px; height: 12px; }
+/* The menu opens under the group, from its left, wherever the button ended up. */
+.members .combo { position: static; }
+.members button.btn.combo-button { min-width: 0; height: 24px; padding: 0 8px; border-radius: 12px; border-style: dashed; background: none; color: var(--fg-2); font-size: 12px; }
+.members button.btn.combo-button:hover { background: var(--bg); color: var(--fg); }
+.members .combo-menu { left: 8px; top: calc(100% - 6px); }
 
 /* Terminal: dark in both themes */
 .terminal-page {
