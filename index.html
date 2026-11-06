@@ -254,7 +254,7 @@
         <div class="shot">
           <picture>
             <source media="(prefers-color-scheme: dark)" srcset="assets/popover-dark.png">
-            <img src="assets/popover-light.png" width="380" height="540" fetchpriority="high" alt="The ScriptDeck menu bar window: two dev servers running with links to their ports, a failed build, and each project's pinned scripts">
+            <img src="assets/popover-light.png" width="380" height="540" fetchpriority="high" alt="The ScriptDeck menu bar window: the same dev server running in two worktrees, an API server and a failed build, then a project's branch, group and pinned scripts">
           </picture>
         </div>
       </div>
@@ -295,6 +295,11 @@
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
             <h3>AI agents (MCP)</h3>
             <p>Turn it on in Settings, and Claude Code or another agent can see your scripts, read and search their output, and start, restart or stop them. Agents never type into a terminal. Not on Windows yet.</p>
+          </div>
+          <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="5" cy="3.6" r="1.6"/><circle cx="5" cy="12.4" r="1.6"/><circle cx="11" cy="4.6" r="1.6"/><path d="M5 5.2v5.6M11 6.2c0 3-6 2.2-6 4.6"/></g></svg></div>
+            <h3>Branches and worktrees</h3>
+            <p>Each project in a git repository shows its branch, uncommitted changes and what's left to pull. Check out or make a branch, pull, or switch to another worktree: its scripts run there while the others keep running, so the same <code>dev</code> can run on two branches at once.</p>
           </div>
           <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
@@ -342,6 +347,11 @@
             <p>A notification when a script fails on its own. Stopping it yourself doesn't count, and neither does a failure you're watching.</p>
           </div>
           <div class="feature">
+            <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="m5.4 8.2 1.8 1.8 3.4-3.9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <h3>Test results</h3>
+            <p>A notification when tests pass or fail, however quick: any script with test, e2e, vitest or jest in its name or command.</p>
+          </div>
+          <div class="feature">
             <div class="ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.6h-2.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
             <h3>Restart on crash</h3>
             <p>Switch it on per script, and a script that dies on its own comes back after 1, 2, 4, 8 and 16 seconds. If all five restarts crash within a minute, it stays down.</p>
@@ -360,9 +370,9 @@
         <figure class="figure">
           <picture>
             <source media="(prefers-color-scheme: dark)" srcset="assets/settings-dark.png">
-            <img src="assets/settings-light.png" width="860" height="620" loading="lazy" alt="The Settings window: a project's Node version, toolkit, custom scripts and package.json scripts">
+            <img src="assets/settings-light.png" width="860" height="620" loading="lazy" alt="The Settings window: a project's branch, custom scripts, group and package.json scripts">
           </picture>
-          <figcaption>Settings: each project's Node version, toolkit, custom scripts and <code>package.json</code> scripts.</figcaption>
+          <figcaption>Settings: each project's branch and worktrees, Node version, toolkit, custom scripts, groups and <code>package.json</code> scripts.</figcaption>
         </figure>
       </div>
     </section>
@@ -414,6 +424,7 @@
             <a href="#running">Running scripts</a>
             <a href="#search">Search and pins</a>
             <a href="#workspaces">Workspaces</a>
+            <a href="#git">Branches and worktrees</a>
             <a href="#node">Node versions</a>
             <a href="#editing">Editing scripts</a>
             <a href="#agents">AI agents</a>
@@ -430,7 +441,7 @@
                 <li>Click the icon, then <b>Add a project</b>. In Settings, click <b>+</b> and choose a folder with a <code>package.json</code>, or drop folders on the window.</li>
                 <li>Click the menu bar icon again and press the play button next to a script. Click a running script to open its terminal.</li>
               </ol>
-              <p class="note">Turn on <b>Launch at login</b> in Settings › General so your scripts are a click away after a restart.</p>
+              <p class="note">Turn on <b>Launch at login</b> in Settings › Preferences so your scripts are a click away after a restart.</p>
             </article>
 
             <article id="running">
@@ -444,14 +455,16 @@
                 <li>If a script can't start because its port is taken, its row names what holds the port, another script or a leftover process. <b>Free port</b> stops that and restarts yours. macOS only.</li>
                 <li>To add arguments such as <code>--watch</code>, Option-click a script's Run button (Alt-click on Windows). ScriptDeck adds the <code>--</code> npm needs and remembers them for next time.</li>
                 <li>Stopping a script escalates from Ctrl-C to SIGTERM to SIGKILL on its whole process tree, so no stray child keeps a port busy.</li>
-                <li>Quitting ScriptDeck stops every script it started. With <b>Reopen running scripts</b> on in Settings › General, the ones still running start again the next time ScriptDeck opens, after an update too.</li>
+                <li>Quitting ScriptDeck stops every script it started. With <b>Reopen running scripts</b> on in Settings › Preferences, the ones still running start again the next time ScriptDeck opens, after an update too.</li>
                 <li>The menu bar icon shows how many scripts are running. Right-click it for <b>Open ScriptDeck</b>, <b>Settings…</b>, <b>Stop All Scripts</b> and <b>Quit ScriptDeck</b>.</li>
               </ul>
               <h4>Restart on crash</h4>
-              <p>Turn on the <b>Restart if it crashes</b> switch on a script's row in its project's settings. When the script dies on its own, it comes back after 1 second, then 2, 4, 8 and 16. If all five restarts crash within a minute of starting, it stays down. Stopping it yourself never restarts it.</p>
+              <p>Click the pulse icon on a script's row in its project's settings (<b>Restart if it crashes</b>). It stays lit while it's on. When the script dies on its own, it comes back after 1 second, then 2, 4, 8 and 16. If all five restarts crash within a minute of starting, it stays down. Stopping it yourself never restarts it.</p>
               <h4>Notifications</h4>
-              <p>With <b>Notify when a script fails</b> on in Settings › General, you get a system notification when a script exits with an error on its own. Stopping a script yourself doesn't count, and neither does a failure you're watching in its terminal. A script that restarts on crash notifies once as it starts restarting, and again if it gives up.</p>
+              <p>With <b>Notify when a script fails</b> on in Settings › Preferences, you get a system notification when a script exits with an error on its own. Stopping a script yourself doesn't count, and neither does a failure you're watching in its terminal. A script that restarts on crash notifies once as it starts restarting, and again if it gives up.</p>
               <p><b>Notify when a long script finishes</b> tells you when one that ran for 30 seconds or more, such as an install or a build, is done.</p>
+              <p><b>Notify when tests pass or fail</b> covers any script with test, tests, e2e, vitest, jest, mocha or cypress in its name or command, however quick it was. Test runners in watch mode never exit, so they don't notify.</p>
+              <p>If macOS is blocking ScriptDeck's notifications, Settings › Preferences shows an <b>Allow</b> button above the switches. macOS asks only once, so after a <b>Don't Allow</b> the button opens System Settings instead.</p>
             </article>
 
             <article id="search">
@@ -463,7 +476,7 @@
                 <li>Groups show up in the results too. <kbd>Enter</kbd> starts the scripts in one that aren't running yet.</li>
                 <li><kbd>Esc</kbd> clears the search. Press it again to close the window.</li>
                 <li>Star a script to pin it. A project shows its pinned and custom scripts, or its root <code>package.json</code> scripts until you pin something. Everything else is one search away.</li>
-                <li>To open ScriptDeck from any app, record a shortcut under <b>Open ScriptDeck</b> in Settings › General. It must include Ctrl, Option or Cmd, so it can't take over a plain key everywhere.</li>
+                <li>To open ScriptDeck from any app, record a shortcut under <b>Open ScriptDeck</b> in Settings › Preferences. It must include Ctrl, Option or Cmd, so it can't take over a plain key everywhere.</li>
               </ul>
             </article>
 
@@ -484,6 +497,19 @@
               </div>
               <h4>Custom scripts</h4>
               <p>For commands that aren't in any <code>package.json</code>, like one package's Storybook or a database container, add a name and a command under <b>Custom scripts</b> in the project's settings. Custom scripts always show in the menu bar window.</p>
+            </article>
+
+            <article id="git">
+              <h3>Branches and worktrees</h3>
+              <p>A project in a git repository shows its branch beside its name, with a dot for uncommitted changes and <code>↓2</code> when there's something to pull. Click it to open the switcher:</p>
+              <ul>
+                <li>Pick a branch to check it out. Type a name that isn't one yet to make it here, or to make a new worktree for it.</li>
+                <li>Switch the project to another worktree of the repository. Its scripts then run in that folder, and what's already running keeps running, so the same <code>dev</code> can run on two branches at once, each in its own terminal named after its branch.</li>
+                <li><b>Pull</b> fast-forwards the branch. Git never waits on a password prompt: it uses your credential helper or SSH agent, or says why it can't.</li>
+                <li>A new worktree or a fresh clone with no <code>node_modules</code> shows its install command, like <code>pnpm install</code>.</li>
+              </ul>
+              <p><b>Manage worktrees…</b> at the foot of the switcher opens the project's settings at its worktrees, each with what's running in it, <b>Use</b> and <b>Remove</b>, and a form for a new one from a new or existing branch. New worktrees go beside the repository, so <code>app</code> and <code>feature/x</code> make <code>app-feature-x</code>. A worktree is never removed while it has uncommitted or untracked files, another worktree inside it, or scripts running in it.</p>
+              <p>To clone a repository, click the button beside <b>+</b> in Settings, then give a URL or <code>owner/repo</code> and a folder. The clone opens as a project. Committing and pushing stay in your terminal or editor.</p>
             </article>
 
             <article id="node">
@@ -511,7 +537,7 @@
               <h3>AI agents (MCP)</h3>
               <p>ScriptDeck has an <a href="https://modelcontextprotocol.io">MCP</a> server, so Claude Code or another AI agent can list your scripts, read and search their output, and start, restart or stop them. It's off by default, and not on Windows yet.</p>
               <ol>
-                <li>Turn on <b>Let AI agents read and restart scripts (MCP)</b> in Settings › General.</li>
+                <li>Turn on <b>Let AI agents read and restart scripts (MCP)</b> in Settings › Preferences.</li>
                 <li>Click <b>Copy</b> beside <b>Add to Claude Code</b> and run the command in your terminal. Another agent needs a stdio server that runs the same app path with <code>--mcp</code>.</li>
               </ol>
               <p class="note">Agents never type into a terminal. They reach ScriptDeck through a socket only your user can open, only while the switch is on, and no network port is opened. An agent can read everything your scripts print, so leave the switch off if that includes secrets.</p>
@@ -521,10 +547,10 @@
               <h3>Settings</h3>
               <p>Open Settings from the gear in the menu bar window, or right-click the menu bar icon.</p>
               <ul>
-                <li><b>Projects.</b> Add folders with <b>+</b> or by dropping them on the window. Rename a project by editing its name, or remove it from ScriptDeck; your files aren't touched.</li>
-                <li><b>Groups.</b> Under <b>Groups</b> in a project's settings, name a group, click <b>Add</b> and tick its scripts. The group gets a row in the menu bar window that starts or stops them all.</li>
+                <li><b>Projects.</b> Add folders with <b>+</b> or by dropping them on the window, or clone a repository with the button beside <b>+</b>. Rename a project by editing its name, or remove it from ScriptDeck; your files aren't touched.</li>
+                <li><b>Groups.</b> Under <b>Groups</b> in a project's settings, click <b>+</b>, name the group and pick its scripts from <b>Add script</b>. The group gets a row in the menu bar window that starts or stops them all, and you can run it from Settings too.</li>
                 <li><b>Toolkit.</b> Install, Outdated, Update, Audit and Clean reinstall run with the project's package manager, each in its own terminal like a script. Clean reinstall deletes <code>node_modules</code> first, so it asks before it runs.</li>
-                <li><b>General.</b> Launch at login, reopening running scripts, the global shortcut, failure and long-script notifications, a system, light or dark theme, the terminal font size, AI agent access, and <b>Check for Updates</b>.</li>
+                <li><b>Preferences.</b> Launch at login, reopening running scripts, the global shortcut, failure, test and long-script notifications, a system, light or dark theme, the terminal font size, AI agent access, and <b>Check for Updates</b>. While macOS blocks ScriptDeck's notifications, an <b>Allow</b> button sits above their switches.</li>
               </ul>
             </article>
 
@@ -536,6 +562,8 @@
                 <li><code>src-tauri/src/project.rs</code> reads and edits <code>package.json</code> and finds workspaces. <code>node.rs</code> resolves Node versions across nvm, fnm and Volta.</li>
                 <li><code>ui/</code> has no framework and no build step. The terminal is <a href="https://xtermjs.org">xterm.js</a>, vendored in <code>ui/vendor/</code>.</li>
                 <li><code>src-tauri/src/update.rs</code> updates the app from the latest GitHub release with the <a href="https://tauri.app/plugin/updater/">Tauri updater</a>.</li>
+                <li><code>src-tauri/src/git/</code> runs the <code>git</code> command line, never through a shell, with your login shell's <code>PATH</code> and the project's Node, so hooks such as husky's work as in a terminal. Pulls are fast-forward only.</li>
+                <li><code>src-tauri/src/permission.rs</code> asks macOS whether ScriptDeck may post notifications.</li>
                 <li><code>src-tauri/src/mcp.rs</code> is the MCP server for AI agents. <code>ScriptDeck --mcp</code>, which an agent launches, pipes its stdio to a Unix socket the app opens in its config folder while the switch is on.</li>
                 <li>Projects and settings live in <code>config.json</code> in the app's config folder: <code>~/Library/Application Support/com.scriptdec.desktop/</code> on macOS, <code>%APPDATA%\com.scriptdec.desktop\</code> on Windows. The bundle identifier keeps the app's old name, ScriptDec: changing it would move this folder, and installed apps would lose their projects and settings.</li>
               </ul>
@@ -577,6 +605,10 @@ pnpm install</code></pre>
               <details>
                 <summary>My global shortcut doesn't work</summary>
                 <p>It needs Ctrl, Option or Cmd. If another app already uses the combination, ScriptDeck says it can't use it: record a different one.</p>
+              </details>
+              <details>
+                <summary>I don't get notifications</summary>
+                <p>Open Settings › Preferences. While macOS blocks ScriptDeck's notifications, an <b>Allow</b> button sits above the switches. After an earlier <b>Don't Allow</b>, it opens System Settings › Notifications, where you can switch ScriptDeck back on. Nothing is posted while ScriptDeck's terminal window is in front, since you're already watching.</p>
               </details>
             </article>
           </div>
