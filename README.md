@@ -55,15 +55,19 @@ Open Settings from the gear in the menu bar window, or right-click the icon.
 
 ## Install
 
-Download the `.dmg` from the [latest release](https://github.com/svichas/ScriptDeck/releases/latest), open it and drag ScriptDeck to Applications. Or install it with [Homebrew](https://brew.sh):
+With [Homebrew](https://brew.sh):
 
 ```bash
 brew install --cask svichas/tap/scriptdeck
 ```
 
+Or download the `.dmg` from the [latest release](https://github.com/svichas/ScriptDeck/releases/latest), open it and drag ScriptDeck to Applications. On Windows, run the `-setup.exe` from the same release.
+
 The app is ad-hoc signed, not notarized, so macOS blocks the first launch. Open it once, then click Open Anyway in System Settings > Privacy & Security.
 
-From 0.2.0 on, ScriptDeck updates itself. When a new release is out, a banner at the bottom of the menu bar window offers it: click Update, then Restart Now once it has downloaded. It waits for you because restarting stops your running scripts.
+From 0.2.0 on, ScriptDeck updates itself. When a new release is out, a banner at the bottom of the menu bar window offers it: click Update, then Restart Now once it has downloaded. It waits for you because restarting stops your running scripts. That's also why `brew upgrade` leaves it alone.
+
+To remove a Homebrew install, run `brew uninstall --cask scriptdeck`. Add `--zap` to delete its settings and caches too.
 
 ## Build from source
 
