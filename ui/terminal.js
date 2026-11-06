@@ -150,7 +150,11 @@ function render() {
     // A running time moves on, so the tooltip is redone each time it's about to show.
     onMouseenter: (event) => { event.currentTarget.title = tabTitle(session); },
     onClick: () => select(session.id),
-  }, h('span', { class: `dot ${dotClass(session)}` }), session.label)));
+  },
+  h('span', { class: `dot ${dotClass(session)}` }),
+  session.label,
+  // Which worktree: the same script can run in several.
+  session.worktree && h('span', { class: 'where' }, session.worktree))));
 
   const session = sessions.find((s) => s.id === active);
   const busy = session?.busyPort && portText(session, owners.get(session.id));

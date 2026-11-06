@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod git;
 #[cfg(unix)]
 mod mcp;
 mod node;
@@ -54,10 +55,15 @@ impl App {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProjectView {
     #[serde(flatten)]
     project: Project,
     scan: Scan,
+    /// Where its scripts run: `Project::dir`.
+    dir: String,
+    /// In a git repository, from its files alone: the windows lay out its git before git is asked about it.
+    is_repo: bool,
 }
 
 #[tauri::command]
@@ -67,7 +73,8 @@ async fn list_projects(app: AppHandle) -> Vec<ProjectView> {
         .into_iter()
         .map(|project| {
             let scan = project::scan(&project);
-            ProjectView { project, scan }
+            let dir = project.dir().to_string();
+            ProjectView { is_repo: git::is_repo(Path::new(&dir)), dir, project, scan }
         })
         .collect()
 }
@@ -82,14 +89,18 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     app.dialog().file().blocking_pick_folder().map(|path| path.to_string())
 }
 
+fn new_project_id() -> String {
+    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    format!("{millis:x}")
+}
+
 #[tauri::command]
 fn add_project(state: State<App>, path: String) -> Result<Project, String> {
     let dir = Path::new(&path);
     let manifest = project::read_manifest(dir).map_err(|e| format!("Not a Node project: {e}"))?;
     let folder = dir.file_name().map(|n| n.to_string_lossy().into_owned());
-    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let project = Project {
-        id: format!("{millis:x}"),
+        id: new_project_id(),
         name: folder.or(manifest["name"].as_str().map(String::from)).unwrap_or_else(|| path.clone()),
         path,
         ..Default::default()
@@ -201,7 +212,8 @@ fn mcp_command() -> Option<String> {
     Some(format!("claude mcp add --scope user scriptdeck -- {} --mcp", project::sh_quote(&exe.to_string_lossy())))
 }
 
-/// `key` picks up the script's settings; the toolkit and Node installs have none.
+/// `key` picks up the script's settings; the toolkit and Node installs have none. `cwd` is the folder to run in:
+/// the project's in the worktree the window showed it on, or where a reopened script ran. None is `Project::dir`.
 #[tauri::command]
 fn run(
     state: State<App>,
@@ -209,17 +221,25 @@ fn run(
     label: String,
     command: String,
     key: Option<String>,
+    cwd: Option<String>,
 ) -> Result<u32, String> {
     let project = state.project(&project_id)?;
-    let node = node::detect(Path::new(&project.path), project.node_version.as_deref(), None);
+    let cwd = cwd.unwrap_or_else(|| project.dir().to_string());
+    let node = node::detect(Path::new(&cwd), project.node_version.as_deref(), None);
+    // Away from the project's own folder, it's named after the worktree's branch too: "web · feature-x".
+    let worktree = (cwd != project.path).then(|| {
+        let folder = || Path::new(&cwd).file_name().map(|name| name.to_string_lossy().into_owned());
+        git::branch_of(Path::new(&cwd)).or_else(folder).unwrap_or_default()
+    });
     state.sessions.start(Spec {
         project_id,
-        project: project.name,
+        project: worktree.as_ref().map_or(project.name.clone(), |branch| format!("{} · {branch}", project.name)),
         label,
         command,
-        cwd: project.path,
         node_bin: node.resolved.as_deref().and_then(node::bin_dir),
         keep_alive: key.is_some_and(|key| project.keep_alive.contains(&key)),
+        cwd,
+        worktree,
     })
 }
 
@@ -307,10 +327,18 @@ fn show_window(app: &AppHandle, label: &str, url: String, title: &str, size: (f6
     window.show().and_then(|_| window.set_focus()).map_err(|e| e.to_string())
 }
 
-/// Async: creating a window from a sync command deadlocks on Windows.
+/// Async: creating a window from a sync command deadlocks on Windows. `project` is the page it opens on, and
+/// `section` a part of that page to show, like "worktrees".
 #[tauri::command]
-async fn open_settings(app: AppHandle) -> Result<(), String> {
-    show_window(&app, "settings", "settings.html".into(), "ScriptDeck", (860.0, 620.0))
+async fn open_settings(app: AppHandle, project: Option<String>, section: Option<String>) -> Result<(), String> {
+    let query = |id: &String| match &section {
+        Some(section) => format!("settings.html?project={id}&section={section}"),
+        None => format!("settings.html?project={id}"),
+    };
+    show_window(&app, "settings", project.as_ref().map_or("settings.html".into(), query), "ScriptDeck", (860.0, 620.0))?;
+    // The URL only counts for a new window.
+    let Some(id) = project else { return Ok(()) };
+    app.emit_to("settings", "select-project", (id, section)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -377,7 +405,7 @@ fn stop_scripts_for_exit(app: &AppHandle) {
         // Running only, so a script the user is stopping stays stopped. list() is in the order they started.
         let running = state.sessions.list().into_iter().filter(|s| s.status == Status::Running);
         let reopen = running
-            .map(|s| config::ReopenScript { project_id: s.project_id, label: s.label, command: s.command })
+            .map(|s| config::ReopenScript { project_id: s.project_id, label: s.label, command: s.command, cwd: Some(s.cwd) })
             .collect();
         let _ = state.edit(|config| {
             config.reopen = reopen;
@@ -510,7 +538,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "open" => show_popover(app),
             "settings" => {
                 let app = app.clone();
-                tauri::async_runtime::spawn(async move { open_settings(app).await });
+                tauri::async_runtime::spawn(async move { open_settings(app, None, None).await });
             }
             "stop_all" => app.state::<App>().sessions.stop_all(),
             "quit" => app.exit(0),
@@ -569,6 +597,8 @@ fn main() {
                 popover_hidden_at: Mutex::new(Instant::now()),
             });
             show_in_dock(app.handle(), false);
+            // Asked once, now, so the menu bar's first look at git doesn't wait for the login shell.
+            std::thread::spawn(git::login_path);
             build_tray(app.handle())?;
             app.set_theme(settings.theme);
             if let Err(error) = set_shortcut(app.handle(), settings.shortcut.as_deref()) {
@@ -588,15 +618,16 @@ fn main() {
             }
             if settings.reopen_scripts {
                 for script in reopen {
-                    // Through run, for the project's Node version. A removed project's scripts fail and are skipped.
+                    // Through run, for the project's Node version, in the folder it ran in. A removed project's
+                    // scripts fail and are skipped.
                     // shortcut: no script key is saved, so a reopened script doesn't restart on crash until it's
                     // started from the menu again; save the key with it to keep that.
-                    let _ = run(app.state(), script.project_id, script.label, script.command, None);
+                    let _ = run(app.state(), script.project_id, script.label, script.command, None, script.cwd);
                 }
             }
             if first_run {
                 let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move { open_settings(handle).await });
+                tauri::async_runtime::spawn(async move { open_settings(handle, None, None).await });
             }
             Ok(())
         })
@@ -625,6 +656,13 @@ fn main() {
             remove_project,
             update_project,
             edit_script,
+            git::commands::git_overview,
+            git::commands::git_repo,
+            git::commands::git_switch,
+            git::commands::git_pull,
+            git::commands::git_add_worktree,
+            git::commands::git_remove_worktree,
+            git::commands::git_clone,
             login_item,
             set_login_item,
             settings,
@@ -697,6 +735,8 @@ mod tests {
             url: None,
             busy_port: None,
             restart_in: None,
+            cwd: "/src/web".into(),
+            worktree: None,
         };
         let (long, short, crash) = (ended(0, 123), ended(0, 5), ended(1, 3));
         let all = Settings::default();

@@ -2,10 +2,15 @@ import {
   call, groupScripts, h, icon, iconButton, invoke, listen, listProjects, MAC, missingLabel, runScript, saveProject,
   scriptLabel, scriptsOf, shortPackage, toast, togglePin,
 } from './shared.js';
+import {
+  gitChip, gitDropdown, initGit, loadRepo, renderClone, resetGit, revealWorktrees, worktreesSection,
+} from './settings-git.js';
+import { group, segmented, setting, switchSetting } from './settings-ui.js';
 import { checkForUpdates, updateBanner } from './update.js';
 
 const MAX_ROWS = 80;
 const GENERAL = 'general';
+const CLONE = 'clone';
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20];
 const KEY_SYMBOLS = { Control: '⌃', Alt: '⌥', Shift: '⇧', Super: '⌘' };
 
@@ -13,7 +18,10 @@ let projects = [];
 let versions = [];
 let settings = {};
 let version = '';
-let selectedId = null; // a project's id, or GENERAL
+// A project's id, GENERAL or CLONE. The menu bar can open the window on a project, and on a part of its page.
+const opened = new URLSearchParams(location.search);
+let selectedId = opened.get('project');
+if (opened.get('section') === 'worktrees') revealWorktrees();
 let filter = '';
 let confirming = null; // the destructive action waiting for its second click
 let editing = null; // the package.json script being changed: { key, package, old, name, body }; old is null for a new one
@@ -35,9 +43,34 @@ async function load() {
     listProjects(), invoke('node_versions'), invoke('login_item'), invoke('settings'),
     window.__TAURI__.app.getVersion(),
   ]);
-  if (selectedId !== GENERAL && !selected()) selectedId = projects[0]?.id ?? null;
+  if (selectedId !== GENERAL && selectedId !== CLONE && !selected()) selectedId = projects[0]?.id ?? null;
   render();
+  await showRepo();
 }
+
+/** The page draws git as last read; this reads it again and draws what changed. */
+async function showRepo() {
+  const id = selected()?.id;
+  const editor = editing;
+  await loadRepo(id);
+  // Not for a page left meanwhile, nor while a script editor opened meanwhile: rebuilding it would take the cursor
+  // out. The next render shows it.
+  if (id === selected()?.id && editing === editor) render();
+}
+
+function select(id) {
+  selectedId = id;
+  filter = '';
+  confirming = null;
+  editing = null;
+  recording = false;
+  resetGit();
+  body.scrollTop = 0;
+  render();
+  showRepo();
+}
+
+initGit({ render: () => render(), load, select, projects: () => projects });
 
 /** Folders from the picker, or dropped on the window. */
 async function addFolders(paths) {
@@ -129,30 +162,6 @@ function shortcutField() {
     }, label));
 }
 
-const settingText = (title, note) => h('div', { class: 'meta' },
-  h('div', { class: 'title' }, title),
-  note && h('div', { class: 'sub' }, note));
-
-const setting = (title, note, control) => h('div', { class: 'setting' }, settingText(title, note), control);
-
-const switchSetting = (title, note, checked, onChange) => h('label', { class: 'setting' },
-  settingText(title, note),
-  h('input', {
-    type: 'checkbox', class: 'switch', role: 'switch', checked, onChange: (event) => onChange(event.target.checked),
-  }));
-
-const group = (title, ...rows) => h('section', {}, h('h2', {}, title), h('div', { class: 'group' }, rows));
-
-function segmented(label, options, value, onPick) {
-  return h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': label },
-    options.map(([text, option]) => h('button', {
-      class: option === value ? 'on' : '',
-      role: 'radio',
-      'aria-checked': String(option === value),
-      onClick: () => onPick(option),
-    }, text)));
-}
-
 function agentsGroup() {
   const copy = h('button', {
     class: 'btn',
@@ -173,7 +182,7 @@ function renderGeneral() {
   fontSize.value = settings.terminalFontSize;
   const themes = [['System', null], ['Light', 'light'], ['Dark', 'dark']];
 
-  head.replaceChildren(h('h1', {}, 'General'));
+  head.replaceChildren(h('h1', {}, 'Preferences'));
   body.replaceChildren(
     group('Startup',
       switchSetting('Launch at login', 'ScriptDeck starts in the menu bar.', launchAtLogin, setLaunchAtLogin),
@@ -458,49 +467,66 @@ function renderProject(project) {
       },
     }),
     h('div', { class: 'path-row' },
-      h('span', { class: 'path', title: project.path, 'data-tauri-drag-region': 'false' }, project.path),
-      h('button', { class: 'link', onClick: () => call('reveal', { path: project.path }) }, 'Show in folder'),
-      confirmButton('remove', 'Remove', 'Remove from ScriptDeck?', remove)));
-  body.replaceChildren(...(error
-    ? [h('p', { class: 'note warn' }, error)]
-    : [nodeSection(project), toolkitSection(project), customSection(project), groupsSection(project),
-      scriptsSection(project)]));
+      // The folder its scripts run in: another worktree's, once it's switched there.
+      h('span', { class: 'path', title: project.dir, 'data-tauri-drag-region': 'false' }, project.dir),
+      gitChip(project),
+      h('button', { class: 'link', onClick: () => call('reveal', { path: project.dir }) }, 'Show in folder'),
+      confirmButton('remove', 'Remove', 'Remove from ScriptDeck?', remove)),
+    gitDropdown(project) ?? '');
+  // Git is secondary here: the chip up top, the worktrees last. Both stay when there's no package.json, say on a
+  // branch without one.
+  body.replaceChildren(...[
+    ...(error
+      ? [h('p', { class: 'note warn' }, error)]
+      : [nodeSection(project), toolkitSection(project), customSection(project), groupsSection(project),
+        scriptsSection(project)]),
+    worktreesSection(project),
+  ].filter(Boolean));
 }
 
 function navItem(id, glyph, label) {
   return h('button', {
     class: `item ${id === selectedId ? 'active' : ''}`,
     'aria-current': id === selectedId ? 'page' : false,
-    onClick: () => {
-      selectedId = id;
-      filter = '';
-      confirming = null;
-      editing = null;
-      recording = false;
-      body.scrollTop = 0;
-      render();
-    },
+    onClick: () => select(id),
   }, icon(glyph), h('span', { class: 'label' }, label));
 }
 
 function render() {
+  const focused = document.activeElement; // kept if it survives the rebuild, like the commit message
   sidebar.replaceChildren(
-    navItem(GENERAL, 'gear', 'General'),
-    h('div', { class: 'nav-title' }, h('span', {}, 'Projects'), iconButton('plus', 'Add project', addProject)),
+    navItem(GENERAL, 'gear', 'Preferences'),
+    h('div', { class: 'nav-title' },
+      h('span', {}, 'Projects'),
+      h('div', { class: 'tools' },
+        iconButton('download', 'Clone a repository', () => select(CLONE), selectedId === CLONE ? 'on' : ''),
+        iconButton('plus', 'Add project', addProject))),
     h('div', { class: 'projects' }, projects.map((project) => navItem(project.id, 'folder', project.name))),
     h('div', { class: 'foot' }, h('button', { class: 'btn', onClick: () => invoke('quit') }, 'Quit ScriptDeck')),
   );
   const project = selected();
   if (selectedId === GENERAL) renderGeneral();
+  else if (selectedId === CLONE) renderClone(head, body);
   else if (project) renderProject(project);
   else {
     head.replaceChildren(h('h1', {}, 'Welcome to ScriptDeck'));
     body.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'Add a folder with a package.json to get started.'),
-      h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),
+      h('div', { class: 'inline center' },
+        h('button', { class: 'btn primary', onClick: addProject }, 'Add project'),
+        h('button', { class: 'btn', onClick: () => select(CLONE) }, 'Clone a repository')),
       h('p', { class: 'note' }, 'Or drop folders on this window.')));
   }
+  if (focused?.isConnected && focused !== document.activeElement) focused.focus();
 }
+
+// From the menu bar: [project id, the part of its page to show, like "worktrees"]. At once, from what this window
+// has; the reload after it brings anything newer. Waiting for it first would wait on git too.
+listen('select-project', ({ payload: [id, section] }) => {
+  if (section === 'worktrees') revealWorktrees();
+  select(id);
+  load();
+});
 
 // Reloading rebuilds the page, which would knock the cursor out of an open script editor.
 window.addEventListener('focus', () => { if (!editing) load(); });

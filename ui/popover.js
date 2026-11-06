@@ -1,8 +1,10 @@
 import {
-  call, dotClass, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen, listProjects, missingLabel,
-  nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, statusText, togglePin, urlLabel,
-  usageLabel, withArgs,
+  call, dotClass, easeHeight, easeShut, freePortButton, groupScripts, h, icon, iconButton, invoke, isLive, listen,
+  listProjects, missingLabel,
+  nodeLabel, portOwners, portText, runScript, saveProject, scriptLabel, scriptsOf, sessionFor as findSession, statusText,
+  toast, togglePin, urlLabel, usageLabel, withArgs,
 } from './shared.js';
+import { branchChip, pull, pullLabel, switcher } from './git.js';
 import { updateBanner } from './update.js';
 
 const MAX_RESULTS = 60;
@@ -17,6 +19,9 @@ let results = [];
 let owners = new Map(); // session id → what holds its busy port
 let confirming = null; // the Free port button waiting for its second click
 const arm = (key) => { confirming = key; render(); };
+let git = {}; // project id → the branch it's on and its changes, for projects in a git repository
+let picker = null; // the open switcher, under its project: { id, el, focus }
+let pulling = null; // the project whose Pull is running
 
 function loadCollapsed() {
   try { return new Set(JSON.parse(localStorage.getItem('collapsed')) ?? []); } catch { return new Set(); }
@@ -55,8 +60,7 @@ const header = h('header', {},
   iconButton('gear', 'Settings', () => call('open_settings')));
 document.body.append(h('div', { class: 'panel' }, header, list, updateBanner));
 
-const sessionFor = (project, script) =>
-  sessions.find((s) => s.projectId === project.id && s.command === script.command);
+const sessionFor = (project, script) => findSession(sessions, project, script);
 
 const openTerminal = (id) => call('open_terminal', { id });
 
@@ -200,6 +204,78 @@ function groupRow(project, group, showProject, selected) {
     idle.length > 0 && iconButton('play', 'Run group', () => startGroup(project, group), 'go'));
 }
 
+/** Switched to a worktree other than the project's own folder. */
+const away = (project) => project.dir !== project.path;
+
+function chip(project) {
+  return git[project.id] && branchChip(project, git[project.id], {
+    open: picker?.id === project.id,
+    onClick: (event) => { event.stopPropagation(); togglePicker(project); },
+  });
+}
+
+function togglePicker(project) {
+  // One still sliding shut counts as closed, so a quick second click opens it again.
+  if (picker?.id === project.id && !picker.closing) return closePicker({ ease: true });
+  picker = {
+    id: project.id,
+    ...switcher(project, {
+      onChange: () => { closePicker(); refresh(); },
+      onClose: () => closePicker({ ease: true }),
+    }),
+  };
+  render();
+  // Slides open, rather than shoving the scripts under it down in one go.
+  if (picker.box) easeHeight(picker.box, 0);
+  picker.focus();
+}
+
+/** `ease` slides it shut first: when it's closed by hand, not when the window hides or a pick reloads it. */
+function closePicker({ ease = false } = {}) {
+  if (!picker) return;
+  const closing = picker;
+  closing.closing = true;
+  const gone = () => {
+    if (picker !== closing) return; // another one opened meanwhile
+    picker = null;
+    render();
+    search.focus();
+  };
+  if (ease && closing.box?.isConnected) easeShut(closing.box, gone);
+  else gone();
+}
+
+async function runPull(project) {
+  pulling = project.id;
+  render();
+  await pull(project.id).catch(() => {});
+  pulling = null;
+  await refresh();
+}
+
+/** Under the switcher: Pull, and Settings for the worktrees. */
+function pickerFoot(project) {
+  const label = pullLabel(git[project.id]);
+  return h('div', { class: 'picker-foot' },
+    label && h('button', {
+      class: 'btn', disabled: pulling != null, 'data-tip': 'Fast-forward only', onClick: () => runPull(project),
+    }, icon('pull'), pulling === project.id ? 'Pulling…' : label),
+    h('span', { class: 'grow' }),
+    h('button', {
+      class: 'link', onClick: () => call('open_settings', { project: project.id, section: 'worktrees' }),
+    }, icon('worktree'), 'Manage worktrees…'));
+}
+
+/** A new worktree or a fresh clone has no node_modules yet, and its scripts would fail until it's installed. */
+function installNotice(project) {
+  const install = project.scan.tools.find((tool) => tool.label === 'Install');
+  const start = () => runScript(project, { name: install.label, command: install.command })
+    .then(() => toast(`Started ${install.command}. It's in Scripts above.`, 'info'), () => {});
+  return install && h('div', { class: 'hint inline install' },
+    h('span', { class: 'warn' }, away(project) ? 'Not installed in this worktree yet' : 'Not installed yet'),
+    h('button', { class: 'btn', 'data-tip': 'Runs in its own terminal', onClick: start }, icon('install'), install.command));
+}
+
 function projectBlock(project) {
   const open = !collapsed.has(project.id);
   const all = scriptsOf(project);
@@ -208,11 +284,17 @@ function projectBlock(project) {
   const hidden = all.length - shown.length;
   const { error, pm, node } = project.scan;
   return [
-    h('button', { class: `project-head ${open ? 'open' : ''}`, onClick: () => toggleCollapsed(project.id) },
-      icon('chevron'),
-      h('span', { class: 'name' }, project.name),
+    // Not a button, as it holds the branch button; the toggle inside is what the keyboard reaches.
+    h('div', { class: `project-head ${open ? 'open' : ''}`, onClick: () => toggleCollapsed(project.id) },
+      h('button', { class: 'toggle', 'aria-expanded': String(open) },
+        icon('chevron'),
+        h('span', { class: 'name' }, project.name)),
+      chip(project),
       h('span', { class: `info ${node.wanted && !node.resolved ? 'warn' : ''}` }, error ? '' : `${pm} · ${nodeLabel(node)}`)),
+    picker?.id === project.id && !picker.closing && git[project.id]
+      && (picker.box = h('div', { class: 'picker-box' }, picker.el, pickerFoot(project))),
     open && error && h('div', { class: 'hint warn' }, error),
+    open && !error && !project.scan.installed && installNotice(project),
     open && project.groups.map((group) => groupRow(project, group, false, false)),
     open && shown.map((script) => scriptRow(project, script, false, false)),
     open && hidden > 0 && h('div', { class: 'hint' }, `${hidden} more scripts, search to find them`),
@@ -238,8 +320,9 @@ function searchResults() {
 function render() {
   const scroll = list.scrollTop;
   tickers = [];
-  // Rebuilding the list detaches the arguments field, which drops its focus.
+  // Rebuilding the list detaches the arguments field and the branch menu, which drops their focus.
   if (document.activeElement === argsInput) queueMicrotask(() => argsInput.focus());
+  if (picker?.el.contains(document.activeElement)) queueMicrotask(() => picker?.focus());
   if (!projects.length) {
     list.replaceChildren(h('div', { class: 'empty' },
       h('div', {}, 'No projects yet.'),
@@ -292,6 +375,8 @@ async function loadSessions() {
 async function refresh() {
   projects = await listProjects();
   await loadSessions();
+  git = await invoke('git_overview'); // a git status per project, so it fills in after
+  render();
 }
 
 async function loadUsage() {
@@ -314,4 +399,11 @@ window.addEventListener('focus', () => {
 window.addEventListener('blur', () => clearInterval(ticker));
 // Hiding cancels the field: the next showing's refresh() replaces the projects argsFor holds.
 window.addEventListener('blur', () => argsFor && closeArgs());
+window.addEventListener('blur', () => picker && closePicker());
+// A click anywhere else in the window puts the switcher away, as a menu goes; a chip's click toggles it itself.
+// On the click, and while it's caught on its way down: rows' buttons stop it reaching the document, and closing on
+// mousedown would slide the list under the pointer before the button came up, so the click would miss.
+document.addEventListener('click', (event) => {
+  if (picker && !picker.closing && !event.target.closest('.picker-box, .branch')) closePicker({ ease: true });
+}, true);
 refresh();

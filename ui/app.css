@@ -12,11 +12,13 @@
   --tint: #fdf1ea;
   --idle: #d6d1c8;
   --ok: #15803d;
+  --on-ok: #ffffff;
   --bad: #be1a45;
   --on-bad: #ffffff;
   --warn: #975a00;
   --star: #b7791f;
   --shadow: 0 1px 2px rgb(33 31 28 / 0.12);
+  --lift: 0 4px 14px rgb(33 31 28 / 0.18);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -31,11 +33,13 @@
     --tint: #3f2619;
     --idle: #4c4843;
     --ok: #5fd38d;
+    --on-ok: #1c1b19;
     --bad: #ff7a93;
     --on-bad: #1c1b19;
     --warn: #f5c542;
     --star: #f5c542;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    --lift: 0 4px 14px rgb(0 0 0 / 0.5);
   }
 }
 
@@ -81,6 +85,10 @@ button.icon.pinned { color: var(--star); }
 .glyph { display: grid; place-items: center; }
 
 button.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 5px 12px;
   border-radius: 6px;
   background: var(--bg-2);
@@ -88,6 +96,10 @@ button.btn {
   white-space: nowrap;
 }
 button.btn:hover { background: var(--bg-3); }
+/* An icon before a button's or a link's words */
+button.btn .glyph svg { width: 14px; height: 14px; }
+button.link { display: inline-flex; align-items: center; gap: 4px; }
+button.link .glyph svg { width: 13px; height: 13px; }
 button.btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
 button.btn.primary:hover { filter: brightness(1.08); }
 button.btn.danger { color: var(--bad); }
@@ -137,20 +149,61 @@ button.btn.danger { color: var(--bad); }
 .empty button { margin-top: 12px; }
 .warn { color: var(--warn); }
 
-.toast {
+/* Notes on what just happened, stacked at the bottom of the window: see toast() */
+.pills {
   position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--bad);
-  color: var(--on-bad);
-  box-shadow: var(--shadow);
-  user-select: text;
-  -webkit-user-select: text;
-  z-index: 10;
+  left: 50%;
+  bottom: 14px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(380px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  pointer-events: none;
 }
+.pill {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 100%;
+  padding: 6px 13px 6px 9px;
+  border-radius: 16px;
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: var(--lift);
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: auto;
+  animation: pill-in 0.18s ease-out;
+  transition: opacity 0.18s, transform 0.18s;
+}
+.pill.success { background: var(--ok); color: var(--on-ok); }
+.pill.error { background: var(--bad); color: var(--on-bad); }
+.pill.leaving { opacity: 0; transform: translateY(4px); }
+.pill .glyph { flex: none; margin-top: 1px; }
+.pill .glyph svg { width: 14px; height: 14px; }
+/* git's errors run to several lines */
+.pill .text { min-width: 0; max-height: 40vh; overflow: auto; white-space: pre-line; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+@keyframes pill-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .pill { animation: none; transition: none; } }
+
+.tip {
+  position: fixed;
+  z-index: 40;
+  max-width: 260px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--fg);
+  color: var(--bg);
+  box-shadow: var(--lift);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+.tip[hidden] { display: none; }
 
 /* The last row of the popover and of Settings, so it never covers the list */
 .update {
@@ -214,19 +267,18 @@ body.popover { background: transparent; overflow: hidden; }
 .project-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  width: 100%;
+  gap: 6px;
   margin-top: 4px;
   padding: 6px 8px;
   border-radius: 8px;
-  text-align: left;
 }
 .project-head:hover { background: var(--bg-2); }
-.project-head .name { font-weight: 600; }
+.project-head .toggle { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; text-align: left; }
+.project-head .toggle .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .project-head .info { flex: 1; min-width: 0; text-align: right; color: var(--fg-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .project-head .info.warn { color: var(--warn); }
-.project-head .glyph { color: var(--fg-2); transition: transform 0.12s; }
-.project-head.open .glyph { transform: rotate(90deg); }
+.project-head .toggle .glyph { color: var(--fg-2); transition: transform 0.12s; }
+.project-head.open .toggle .glyph { transform: rotate(90deg); }
 .hint { padding: 4px 12px 8px; color: var(--fg-2); font-size: 11px; }
 .hint.port { padding: 0 8px 8px 28px; } /* under its row's title */
 .args { display: flex; align-items: center; gap: 8px; padding: 2px 8px 6px 28px; }
@@ -256,7 +308,7 @@ body.popover { background: transparent; overflow: hidden; }
 .name-input { width: 100%; font-size: 18px; font-weight: 600; background: none; border-color: transparent; padding: 2px 6px; margin-left: -7px; }
 .name-input:hover { border-color: var(--line); }
 .path-row { display: flex; align-items: center; gap: 12px; margin-top: 2px; color: var(--fg-2); font-size: 12px; }
-.path-row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; -webkit-user-select: text; }
+.path-row .path { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; -webkit-user-select: text; }
 .link { color: var(--accent); }
 .link:hover { text-decoration: underline; }
 .inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -318,6 +370,125 @@ body.dropping::after {
   pointer-events: none;
 }
 
+/* Git: the branch chip and switcher in the popover, and the Git, Worktrees and Clone pages in Settings */
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  height: 20px;
+  padding: 0 7px 0 4px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.project-head:hover .branch { background: var(--bg-3); }
+.branch:hover, .branch.open { background: var(--bg-3); color: var(--fg); }
+/* Switched to another worktree: its scripts run in another folder, so it stands out. */
+.branch.away, .project-head:hover .branch.away { background: var(--tint); color: var(--accent); }
+.branch.away:hover, .branch.away.open { box-shadow: inset 0 0 0 1px var(--accent); }
+.branch .glyph svg { width: 12px; height: 12px; }
+.branch .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch .dirty { flex: none; width: 6px; height: 6px; margin: 0 1px; border-radius: 50%; background: var(--warn); }
+.branch .sync { white-space: nowrap; }
+.picker-box { margin: 2px 6px 8px 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow); overflow: hidden; }
+.group .picker-box { margin: 0 14px 12px; box-shadow: none; }
+.picker input { width: 100%; padding: 7px 10px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: var(--bg-2); }
+.picker-list { max-height: 260px; overflow-y: auto; padding: 4px; transition: opacity 0.12s; }
+/* While git works, the field says what it's doing and the list waits, dimmed, where it was. */
+.picker.busy .picker-list { opacity: 0.45; pointer-events: none; }
+/* Placeholders the size of what they stand for, until a project's first read lands */
+.row.skeleton { pointer-events: none; }
+.skeleton .bar { display: block; height: 9px; margin-left: 24px; border-radius: 5px; background: var(--bg-3); animation: pulse-bar 1s ease-in-out infinite alternate; }
+.branch.placeholder { width: 84px; pointer-events: none; }
+.branch.placeholder .bar { display: block; flex: 1; height: 8px; margin: 0 3px; border-radius: 4px; background: var(--bg-3); animation: pulse-bar 1s ease-in-out infinite alternate; }
+@keyframes pulse-bar { from { opacity: 0.5; } }
+/* Git that turns up after the page: faded in the first time, not popped in. */
+.appear { animation: appear 0.22s ease-out; }
+@keyframes appear { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton .bar, .branch.placeholder .bar, .appear { animation: none; } }
+.picker-heading { padding: 8px 8px 2px; color: var(--fg-2); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.picker-heading:first-child { padding-top: 2px; }
+/* The Worktrees heading folds its group away */
+button.picker-heading.toggle { display: flex; align-items: center; gap: 3px; width: 100%; padding: 5px 6px 4px 4px; border-radius: 6px; text-align: left; }
+button.picker-heading.toggle:hover { background: var(--bg-2); color: var(--fg); }
+.picker-heading.toggle .glyph svg { width: 12px; height: 12px; }
+/* The chevron turns; the worktree icon after it stays put. */
+.picker-heading.toggle .glyph:first-child { transition: transform 0.12s; }
+.picker-heading.toggle.open .glyph:first-child { transform: rotate(90deg); }
+.picker-heading .tag { margin-left: auto; letter-spacing: 0; text-transform: none; }
+.picker .row { min-height: 30px; padding: 2px 8px; }
+.picker .row .glyph { color: var(--fg-2); }
+.picker .hint { padding: 8px; }
+/* One line: the name, then where it is, dimmed */
+.meta.line { display: flex; align-items: baseline; gap: 8px; }
+.meta.line .title { flex: none; max-width: 65%; }
+.meta.line .sub { flex: 1; min-width: 0; }
+.tag { flex: none; padding: 1px 6px; border-radius: 8px; background: var(--bg-3); color: var(--fg-2); font-size: 10px; font-weight: 600; }
+.tag.on { color: var(--ok); }
+.picker-foot { display: flex; align-items: center; gap: 6px; padding: 6px; border-top: 1px solid var(--line); background: var(--bg-2); }
+.picker-foot .grow { flex: 1; }
+.picker-foot .btn { gap: 5px; padding: 3px 10px; font-size: 12px; }
+.picker-foot .link { font-size: 12px; white-space: nowrap; }
+.picker-foot .btn .glyph svg, .group.trees .btn .glyph svg, .hint.install .btn .glyph svg { width: 13px; height: 13px; }
+.hint.install { padding: 0 8px 8px 28px; } /* under the project's name, like the port notice */
+.hint.install .btn { gap: 5px; padding: 2px 9px; font: 11px ui-monospace, Menlo, Consolas, monospace; }
+/* Settings: the chip beside the project's folder opens the switcher over the page, like a menu */
+.page-head { position: relative; }
+.path-row .link { margin-left: auto; }
+.path-row .branch { flex: 0 1 auto; max-width: 240px; }
+.picker-box.dropdown { position: absolute; top: calc(100% - 6px); left: 22px; z-index: 15; width: min(460px, calc(100% - 44px)); margin: 0; box-shadow: var(--lift); }
+/* Settings: the worktrees, last on the page and folded away until opened */
+details.worktrees > summary { display: flex; align-items: center; gap: 4px; list-style: none; }
+details.worktrees > summary::-webkit-details-marker { display: none; }
+details.worktrees > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+details.worktrees > summary h2 { margin: 0; }
+details.worktrees > summary .glyph { color: var(--fg-2); }
+details.worktrees > summary .glyph:first-child { transition: transform 0.12s; }
+details.worktrees[open] > summary { margin-bottom: 8px; }
+details.worktrees[open] > summary .glyph:first-child { transform: rotate(90deg); }
+.group.trees { max-height: 196px; overflow-y: auto; padding: 4px; }
+.group.trees .row { min-height: 36px; padding: 2px 4px 2px 10px; }
+.group.trees .row > .glyph { color: var(--fg-2); }
+.group.trees .row .btn { gap: 5px; padding: 3px 10px; font-size: 12px; }
+.group.trees .row .note { margin: 0; padding: 0 8px; }
+.note.in-use, .note.removing { display: inline-flex; align-items: center; gap: 4px; }
+.note.in-use .glyph { color: var(--ok); }
+.note.in-use .glyph svg { width: 13px; height: 13px; }
+.row.worktree.current { box-shadow: inset 2px 0 var(--accent); }
+/* A worktree whose folder is being deleted: only its row waits */
+.row.worktree.removing > :not(.note) { opacity: 0.5; }
+.spinner { flex: none; width: 11px; height: 11px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+.worktree-form { flex-wrap: nowrap; margin-top: 8px; }
+.worktree-form input { flex: 1; min-width: 0; }
+/* A select you can search, drawn like the switcher: see combo.js */
+.combo { position: relative; flex: none; }
+button.btn.combo-button { justify-content: flex-start; min-width: 150px; max-width: 220px; }
+.combo-button .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.combo-button .glyph:first-child { color: var(--fg-2); }
+/* The chevron points down, and up while it's open */
+.combo-button .glyph:last-child { color: var(--fg-2); transform: rotate(90deg); transition: transform 0.12s; }
+.combo-button[aria-expanded="true"] .glyph:last-child { transform: rotate(-90deg); }
+.picker-box.combo-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; width: 300px; margin: 0; box-shadow: var(--lift); }
+.picker-box.combo-menu.up { top: auto; bottom: calc(100% + 4px); }
+.combo-menu[hidden] { display: none; }
+.combo-menu .picker-list { max-height: 220px; }
+.combo .chosen { margin-left: auto; color: var(--accent); }
+.combo .chosen svg { width: 13px; height: 13px; }
+.worktree-form .note { margin: 0; }
+.clone .url { width: 340px; max-width: 100%; }
+.clone section + .actions { margin-top: 14px; }
+.clone .actions .note { margin: 0; }
+.nav-title .tools { display: flex; gap: 2px; }
+button.icon.on { background: var(--bg-3); color: var(--fg); }
+.inline.center { justify-content: center; }
+
 /* Terminal: dark in both themes */
 .terminal-page {
   color-scheme: dark;
@@ -345,6 +516,7 @@ body.dropping::after {
 .tab { display: flex; align-items: center; gap: 6px; flex: none; max-width: 220px; padding: 4px 10px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab:hover, .tab.active { background: var(--bg-3); }
 .tab.active { color: var(--fg); }
+.tab .where { color: var(--accent); font-size: 11px; } /* the worktree's branch, beside the script's name */
 #actions .warn { max-width: 30vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* leaves the tabs room in a narrow window */
 #screen { flex: 1; min-height: 0; padding: 6px 0 2px 8px; position: relative; }
 /* Above xterm's own layers, the highest of which is its scrollbar at 11 */

@@ -39,6 +39,8 @@ pub struct Scan {
     pub scripts: Vec<Script>,
     pub tools: Vec<Tool>,
     pub error: Option<String>,
+    /// Its dependencies are there, or it has none. A new worktree or a fresh clone needs an install first.
+    pub installed: bool,
 }
 
 pub fn read_manifest(dir: &Path) -> Result<Value, String> {
@@ -182,9 +184,9 @@ fn tools(pm: &str) -> Vec<Tool> {
     .to_vec()
 }
 
-/// The folder of the project's own package.json, or of one of its workspace packages.
+/// The folder of the project's own package.json, or of one of its workspace packages, in the worktree it's on.
 pub fn package_dir(project: &Project, package: Option<&str>) -> Result<PathBuf, String> {
-    let root = PathBuf::from(&project.path);
+    let root = PathBuf::from(project.dir());
     let Some(name) = package else { return Ok(root) };
     find_packages(&root, &workspace_patterns(&root, &read_manifest(&root)?))
         .into_iter()
@@ -272,12 +274,15 @@ pub fn move_in_groups(project: &mut Project, old: &str, new: Option<String>) {
 /// Storing its whole copy would undo whatever another window changed after this one loaded.
 pub fn merge(stored: &mut Project, base: &Project, edited: Project) {
     // Every field by name, so a new one won't compile until it's merged here too.
-    let Project { id: _, path: _, name, node_version, custom, pinned, keep_alive, groups } = edited;
+    let Project { id: _, path: _, name, node_version, custom, pinned, keep_alive, groups, worktree } = edited;
     if name != base.name {
         stored.name = name;
     }
     if node_version != base.node_version {
         stored.node_version = node_version;
+    }
+    if worktree != base.worktree {
+        stored.worktree = worktree;
     }
     merge_list(&mut stored.custom, &base.custom, custom, |script| &script.id);
     merge_list(&mut stored.pinned, &base.pinned, pinned, |key| key);
@@ -298,8 +303,15 @@ fn merge_list<T: PartialEq>(stored: &mut Vec<T>, base: &[T], edited: Vec<T>, id:
     }
 }
 
+/// Dependencies to install, and no node_modules (here or above, as a workspace has) or Yarn Plug'n'Play.
+fn installed(root: &Path, manifest: &Value) -> bool {
+    let wants = ["dependencies", "devDependencies"].iter().any(|key| manifest[key].as_object().is_some_and(|m| !m.is_empty()));
+    !wants || root.ancestors().any(|dir| dir.join("node_modules").is_dir() || dir.join(".pnp.cjs").is_file())
+}
+
+/// The project as it is in the worktree it's switched to.
 pub fn scan(project: &Project) -> Scan {
-    let root = Path::new(&project.path);
+    let root = Path::new(project.dir());
     let manifest = match read_manifest(root) {
         Ok(m) => m,
         Err(error) => return Scan { error: Some(error), ..Default::default() },
@@ -318,6 +330,7 @@ pub fn scan(project: &Project) -> Scan {
     Scan {
         node: node::detect(root, project.node_version.as_deref(), engines),
         tools: tools(&pm),
+        installed: installed(root, &manifest),
         pm,
         scripts,
         error: None,
@@ -548,6 +561,34 @@ mod tests {
         assert_eq!(stored.keep_alive, ["custom:a"]);
         let groups: Vec<_> = stored.groups.iter().map(|g| g.id.as_str()).collect();
         assert_eq!(groups, ["g", "h"]);
+    }
+
+    #[test]
+    fn reads_the_worktree_it_is_switched_to_and_whether_it_is_installed_there() {
+        let dir = repo("worktree-scan");
+        write(dir.join("main/package.json"), json!({"scripts": {"dev": "a"}, "dependencies": {"x": "1"}}));
+        write(dir.join("other/package.json"), json!({"scripts": {"dev": "b", "new": "c"}, "dependencies": {"x": "1"}}));
+        fs::create_dir_all(dir.join("main/node_modules")).unwrap();
+        let mut main = project(&dir.join("main"));
+        assert!(scan(&main).installed);
+        main.worktree = Some(dir.join("other").to_string_lossy().into());
+        let other = scan(&main);
+        assert_eq!(other.scripts.iter().map(|s| s.body.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+        assert!(!other.installed);
+        // No dependencies, nothing to install.
+        write(dir.join("plain/package.json"), json!({"scripts": {"x": "y"}}));
+        assert!(scan(&project(&dir.join("plain"))).installed);
+    }
+
+    #[test]
+    fn switching_worktree_saves_like_any_other_change() {
+        let loaded = Project::default();
+        let mut stored = loaded.clone();
+        merge(&mut stored, &loaded, Project { worktree: Some("/src/app-x".into()), ..loaded.clone() });
+        assert_eq!(stored.worktree.as_deref(), Some("/src/app-x"));
+        // A window that didn't touch it leaves it be.
+        merge(&mut stored, &loaded, loaded.clone());
+        assert_eq!(stored.worktree.as_deref(), Some("/src/app-x"));
     }
 
     #[cfg(unix)]

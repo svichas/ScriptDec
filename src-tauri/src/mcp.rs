@@ -1,4 +1,4 @@
-//! Lets AI agents read and restart scripts over MCP, while the switch in Settings > General is on.
+//! Lets AI agents read and restart scripts over MCP, while the switch in Settings > Preferences is on.
 //! An agent launches `ScriptDeck --mcp`, which pipes its stdio to a Unix socket the running app opens
 //! in its config folder. The socket's 0600 permissions are the access control: no port is opened.
 
@@ -55,7 +55,7 @@ pub fn bridge(identifier: &str) -> i32 {
     let Some(socket) = socket_path(identifier).and_then(|path| UnixStream::connect(path).ok()) else {
         eprintln!(
             "ScriptDeck isn't letting AI agents in. Open ScriptDeck and turn on \
-             \"Let AI agents read and restart scripts (MCP)\" in Settings > General."
+             \"Let AI agents read and restart scripts (MCP)\" in Settings > Preferences."
         );
         return 1;
     };
@@ -258,7 +258,8 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<String, String
                         json!({ "key": format!("custom:{}", c.id), "name": c.name, "command": c.command })
                     });
                     let scripts: Vec<Value> = custom.chain(scan.scripts.iter().map(|s| json!(s))).collect();
-                    json!({ "id": p.id, "name": p.name, "path": p.path, "scripts": scripts, "error": scan.error })
+                    // `dir`: where its scripts run, the project's folder in the git worktree it's switched to.
+                    json!({ "id": p.id, "name": p.name, "path": p.path, "dir": p.dir(), "scripts": scripts, "error": scan.error })
                 })
                 .collect();
             Ok(json!({ "projects": projects, "sessions": sessions.list() }).to_string())
@@ -276,7 +277,7 @@ fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Result<String, String
             let key = args["script"].as_str().unwrap_or_default();
             let (label, command) = find_script(&project, project::scan(&project).scripts, key)
                 .ok_or_else(|| format!("{} has no script {key}; list_scripts has their keys", project.name))?;
-            view(crate::run(app.state(), project.id, label, command, Some(key.to_string()))?)
+            view(crate::run(app.state(), project.id, label, command, Some(key.to_string()), None)?)
         }
         "restart_script" => {
             let id = session()?;
